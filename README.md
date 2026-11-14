@@ -40,6 +40,7 @@ versión 0.0.1. corre en aarch64 sobre la máquina `virt` de QEMU.
 | 1 | arranque en ensamblador, linker script, UART PL011, handler de pánico | listo |
 | 2 | vectores de excepciones EL1, GICv2, temporizador genérico a 10 Hz | listo |
 | 3 | MMU con cachés, gestor de páginas físicas, heap del kernel | listo |
+| 4 | tareas del kernel, planificador round-robin con apropiación, sleep, exit | listo |
 
 salida actual al arrancar:
 
@@ -48,8 +49,11 @@ salida actual al arrancar:
     memoria: 130468 KiB libres de 131072 KiB
     heap: suma=49995000 box=42 big=1048576 usado=1184 KiB
     heap: tras liberar, usado=32 KiB
-    uptime: 1s
-    uptime: 2s
+    [a] paso 1
+    [b] paso 1
+    [ocupada] sigo corriendo, ticks=7
+    [a] paso 2
+    ...
 
 ### detalles de lo que existe
 
@@ -63,6 +67,15 @@ salida actual al arrancar:
 - páginas físicas de 4 KiB con bitmap, con reserva de rangos contiguos
 - heap por clases de tamaño de 16 a 2048 bytes con listas libres; páginas contiguas para tamaños mayores
 
+**procesos y planificador** ([src/sched.rs](src/sched.rs), [src/irq.rs](src/irq.rs)):
+
+- tareas con pila propia de 16 KiB y cambio de contexto en ensamblador que guarda solo `x19`-`x30` y `sp`
+- round-robin con rodajas de 100 ms; el timer marca la necesidad de cambiar y el cambio ocurre al final del manejador de irq, después del EOI
+- una tarea que nunca cede la cpu es apropiada igualmente
+- `sleep` saca la tarea de la cola: las tareas dormidas no consumen cpu y el core duerme con `wfe` si no hay trabajo
+- `exit` libera la pila de la tarea desde otro contexto
+- la tarea 0 (arranque) hace de idle
+
 limitaciones conocidas, a resolver en las próximas etapas:
 
 - toda la RAM es legible, escribible y ejecutable; falta W^X con tablas finas y espacios de direcciones por proceso
@@ -75,7 +88,7 @@ limitaciones conocidas, a resolver en las próximas etapas:
 1. arranque y UART (listo)
 2. excepciones, GIC y temporizador (listo)
 3. memoria física, MMU y heap (listo)
-4. procesos, planificador y cambio de contexto
+4. tareas, planificador y cambio de contexto (listo)
 5. modo usuario (EL0) y llamadas al sistema
 6. memoria fina: tablas de 4 KiB, W^X, espacio de direcciones por proceso, lectura del DTB
 7. drivers virtio: disco, red, teclado y ratón; sistema de archivos propio
@@ -114,6 +127,8 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
         ├── trap.rs        vectores y manejadores de excepciones
         ├── gic.rs         controlador de interrupciones
         ├── timer.rs       temporizador del sistema
+        ├── irq.rs         secciones críticas
+        ├── sched.rs       tareas y planificador
         ├── mmu.rs         memoria virtual
         ├── pmm.rs         memoria física
         └── heap.rs        asignador del kernel
