@@ -49,17 +49,48 @@ impl Write for Uart {
 #[macro_export]
 macro_rules! println {
     ($($arg:tt)*) => {{
+        let g = $crate::irq::save();
         let _ = core::fmt::Write::write_fmt(&mut $crate::Uart, format_args!($($arg)*));
         let _ = core::fmt::Write::write_str(&mut $crate::Uart, "\n");
+        $crate::irq::restore(g);
     }};
 }
 
 mod gic;
 mod heap;
+mod irq;
 mod mmu;
 mod pmm;
+mod sched;
 mod timer;
 mod trap;
+
+fn demo_a() {
+    for i in 1..=4 {
+        println!("[a] paso {}", i);
+        sched::sleep(10);
+    }
+    println!("[a] fin");
+}
+
+fn demo_b() {
+    for i in 1..=4 {
+        println!("[b] paso {}", i);
+        sched::sleep(15);
+    }
+    println!("[b] fin");
+}
+
+// nunca cede la cpu: demuestra que el timer la recupera
+fn demo_busy() {
+    let mut n: u64 = 0;
+    loop {
+        n = core::hint::black_box(n.wrapping_add(1));
+        if n % 100_000_000 == 0 {
+            println!("[ocupada] sigo corriendo, ticks={}", timer::ticks());
+        }
+    }
+}
 
 extern crate alloc;
 
@@ -103,6 +134,12 @@ pub extern "C" fn kmain() -> ! {
     trap::init();
     gic::init();
     timer::init();
+
+    sched::init();
+    sched::spawn(demo_a);
+    sched::spawn(demo_b);
+    sched::spawn(demo_busy);
+
     unsafe { core::arch::asm!("msr daifclr, #2") }; // desenmascara irq
 
     #[cfg(feature = "crash-test")]

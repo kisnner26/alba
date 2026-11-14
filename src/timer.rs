@@ -24,8 +24,10 @@ pub fn init() {
 pub fn tick() {
     let interval = INTERVAL.load(Ordering::Relaxed);
     unsafe { asm!("msr cntp_tval_el0, {}", in(reg) interval) };
-    let t = TICKS.fetch_add(1, Ordering::Relaxed) + 1;
-    if t % HZ == 0 {
-        crate::println!("uptime: {}s", t / HZ);
-    }
+    TICKS.fetch_add(1, Ordering::Relaxed);
+    crate::sched::on_tick();
+}
+
+pub fn ticks() -> u64 {
+    TICKS.load(Ordering::Relaxed)
 }

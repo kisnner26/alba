@@ -136,6 +136,7 @@ extern "C" fn handle_sync() {
 #[no_mangle]
 extern "C" fn handle_irq() {
     crate::gic::dispatch();
+    crate::sched::preempt_check();
 }
 
 #[no_mangle]
