@@ -1,0 +1,14 @@
+[package]
+name = "alba"
+version = "0.0.1"
+edition = "2021"
+
+[features]
+crash-test = []
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = 2
