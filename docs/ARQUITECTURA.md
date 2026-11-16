@@ -67,6 +67,12 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 - `exit` deja la tarea en una lista de zombis; su pila se libera desde otra tarea (`reap`), nunca desde la propia.
 - invariante: toda mutación del planificador ocurre con irq enmascaradas (un solo core). `irq::save` / `irq::restore` son las secciones críticas.
 
+## disco y sistema de archivos
+
+- **virtio-mmio** ([src/virtio.rs](../src/virtio.rs)): QEMU `virt` expone 32 ranuras de 0x200 bytes desde `0x0a00_0000` (en el bloque de dispositivos, sin caché). se exige la versión moderna (`-global virtio-mmio.force-legacy=false`).
+- **virtio-blk** ([src/blk.rs](../src/blk.rs)): inicialización según la especificación (reinicio, `ACKNOWLEDGE`, `DRIVER`, característica `VERSION_1`, `FEATURES_OK`, cola 0, `DRIVER_OK`). una cola de 8 entradas y una petición a la vez, con una cadena de 3 descriptores (cabecera, 512 bytes de datos, estado). cada petición corre con las interrupciones enmascaradas y espera por sondeo con un límite. la memoria de la cola sale de `pmm` (identidad). pendiente: interrupciones en lugar de sondeo y mantenimiento de caché para hardware real.
+- **albafs** ([src/fs.rs](../src/fs.rs), [albafs.md](albafs.md)): montaje con validación del superbloque y del directorio (tamaños, límites, que ningún archivo se salga del disco), lectura de archivos sector a sector. solo lectura por ahora.
+
 ## modo usuario y llamadas al sistema
 
 - un proceso de usuario tiene su propio espacio de direcciones ([src/vm.rs](../src/vm.rs)): tablas de nivel 1, 2 y 3 y un ASID (1-255; el 0 es del kernel). las entradas 0 (dispositivos) y 1 (RAM) del nivel 1 se comparten con el kernel, pero sus páginas son solo EL1; la entrada 2 apunta a las tablas del proceso.
@@ -89,4 +95,4 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 
 ## pruebas
 
-`tests/boot.sh` hace tres pruebas en QEMU: (1) arranque normal con las líneas esperadas, tareas, modo usuario, intruso detenido, escritura en código de solo lectura detenida, dos procesos que escriben en la misma dirección virtual sin pisarse y ninguna excepción; (2) con la feature `wx-test`, escribir en el texto del kernel debe dar un fallo de datos (clase `0x25`); (3) con `-m 256M` el kernel debe leer 256 MiB del DTB. corre en cada push en GitHub Actions.
+`tests/boot.sh` genera un disco albafs y hace tres pruebas en QEMU: (1) arranque normal con las líneas esperadas (incluida la detección del disco virtio, una escritura y lectura de sector y el listado y lectura de albafs), tareas, modo usuario, intruso detenido, escritura en código de solo lectura detenida, dos procesos que escriben en la misma dirección virtual sin pisarse y ninguna excepción; (2) con la feature `wx-test`, escribir en el texto del kernel debe dar un fallo de datos (clase `0x25`); (3) con `-m 256M` el kernel debe leer 256 MiB del DTB. corre en cada push en GitHub Actions.

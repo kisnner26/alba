@@ -43,6 +43,7 @@ versión 0.0.1. corre en aarch64 sobre la máquina `virt` de QEMU.
 | 4 | tareas del kernel, planificador round-robin con apropiación, sleep, exit | listo |
 | 5 | modo usuario (EL0), llamadas al sistema, aislamiento de memoria kernel/usuario | listo |
 | 6 | memoria fina: W^X con páginas de 4 KiB, RAM leída del DTB, espacios de direcciones por proceso y cargador de imagen | listo |
+| 7 | virtio-blk y sistema de archivos propio (albafs) | en curso: disco, lectura y escritura de sectores y albafs de solo lectura listos |
 
 salida actual al arrancar:
 
@@ -71,6 +72,8 @@ salida actual al arrancar:
 - heap por clases de tamaño de 16 a 2048 bytes con listas libres; páginas contiguas para tamaños mayores
 
 **arranque estándar** ([src/fdt.rs](src/fdt.rs), [tools/mkimage.py](tools/mkimage.py)): alba empieza con la cabecera de imagen arm64 (el protocolo de arranque de linux). QEMU y los firmwares reales la reconocen y entregan el device tree en `x0`; el kernel lo recorre con un lector propio para saber cuánta RAM hay y reserva el propio DTB. la imagen plana la genera un script propio a partir del ELF, sin `objcopy`.
+
+**disco y sistema de archivos** ([src/virtio.rs](src/virtio.rs), [src/blk.rs](src/blk.rs), [src/fs.rs](src/fs.rs), [docs/albafs.md](docs/albafs.md)): transporte virtio-mmio moderno con sondeo de las 32 ranuras, driver de bloque con una cola de tres descriptores por petición, y `albafs`, un formato propio (superbloque, directorio plano, archivos contiguos). `tools/mkfs.py` crea el disco a partir de la carpeta `disk/`. el kernel valida el superbloque y el directorio antes de confiar en ellos. por ahora la espera de cada petición es por sondeo; las interrupciones de virtio llegarán después.
 
 **espacios de direcciones** ([src/vm.rs](src/vm.rs)): cada proceso tiene tablas propias (niveles 1, 2 y 3), un ASID de 8 bits y ve su imagen en `0x8000_0000` (solo lectura y ejecución), una página de datos en `0x8010_0000` y la pila bajo `0x8020_0000`. todo lo demás está sin mapear: ni siquiera existe la memoria de otros procesos ni la del kernel para EL0. el cargador copia la imagen de usuario embebida en el kernel a páginas nuevas y puestas a cero. el planificador cambia `TTBR0` solo cuando cambia el espacio. el test prueba que dos procesos que escriben en la misma dirección virtual no se pisan.
 
@@ -105,7 +108,7 @@ limitaciones conocidas, a resolver en las próximas etapas:
 4. tareas, planificador y cambio de contexto (listo)
 5. modo usuario (EL0) y llamadas al sistema (listo)
 6. memoria fina: W^X, lectura del DTB, espacio de direcciones por proceso y cargador (listo)
-7. drivers virtio: disco, red, teclado y ratón; sistema de archivos propio
+7. drivers virtio: disco (listo), red, teclado y ratón; sistema de archivos propio (albafs de lectura, listo; escritura y carga de ejecutables, pendiente)
 8. shell, biblioteca estándar propia y programas de usuario
 9. GPU virtio, framebuffer, compositor y escritorio estilo macOS
 10. multinúcleo (SMP)
@@ -138,6 +141,8 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
     ├── linker.ld          mapa de memoria del kernel
     ├── Makefile
     ├── tools/mkimage.py   genera la imagen plana a partir del ELF
+    ├── tools/mkfs.py      crea un disco albafs desde la carpeta disk/
+    ├── disk/              archivos que van al disco de prueba
     ├── build.rs           reenlaza si cambia linker.ld
     ├── tests/boot.sh      pruebas de arranque, modo usuario y W^X
     ├── docs/ARQUITECTURA.md
@@ -150,6 +155,9 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
         ├── irq.rs         secciones críticas
         ├── sched.rs       tareas y planificador
         ├── syscall.rs     llamadas al sistema
+        ├── virtio.rs      transporte virtio-mmio
+        ├── blk.rs         driver de bloque
+        ├── fs.rs          albafs (lectura)
         ├── vm.rs          espacios de direcciones y cargador
         ├── user.rs        programas de usuario de demostración
         ├── mmu.rs         memoria virtual
