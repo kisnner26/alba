@@ -24,9 +24,20 @@ global_asm!(
     stp x26, x27, [sp, #208]
     stp x28, x29, [sp, #224]
     str x30, [sp, #240]
+    // estado de excepcion: es por tarea, no global, asi que va en el marco
+    mrs x9, elr_el1
+    mrs x10, spsr_el1
+    stp x9, x10, [sp, #248]
+    mrs x9, sp_el0
+    str x9, [sp, #264]
 .endm
 
 .macro restore_regs
+    ldp x9, x10, [sp, #248]
+    msr elr_el1, x9
+    msr spsr_el1, x10
+    ldr x9, [sp, #264]
+    msr sp_el0, x9
     ldp x0, x1, [sp, #0]
     ldp x2, x3, [sp, #16]
     ldp x4, x5, [sp, #32]
