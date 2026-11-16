@@ -194,6 +194,7 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
     sched::spawn_user(user::demo as *const () as usize);
     sched::spawn_user(user::demo as *const () as usize);
     sched::spawn_user(user::intruso as *const () as usize);
+    sched::spawn_user(user::intruso2 as *const () as usize);
 
     unsafe { core::arch::asm!("msr daifclr, #2") }; // desenmascara irq
 

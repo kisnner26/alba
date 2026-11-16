@@ -24,6 +24,13 @@ ustr!(FIN, b"] fin");
 ustr!(NL, b"\n");
 ustr!(INTRUSO, b"[intruso] intentando leer memoria del kernel (debe fallar)\n");
 ustr!(NO_FALLO, b"[intruso] ERROR: la lectura no fallo\n");
+ustr!(PROPIOS, b"] datos propios intactos");
+ustr!(COMPARTIDA, b"] ERROR: memoria compartida");
+ustr!(INTRUSO2, b"[intruso2] intentando escribir en su propio codigo (debe fallar)\n");
+ustr!(NO_FALLO2, b"[intruso2] ERROR: la escritura no fallo\n");
+
+// pagina de datos del proceso: misma direccion virtual en todos, paginas fisicas distintas
+const DATOS: *mut u64 = crate::vm::DATA_VA as *mut u64;
 
 #[inline(always)]
 fn syscall(nr: u64, a0: u64, a1: u64, a2: u64) -> u64 {
@@ -106,6 +113,7 @@ impl Line {
 #[link_section = ".user.text"]
 pub extern "C" fn demo() -> ! {
     let pid = syscall(3, 0, 0, 0);
+    unsafe { write_volatile(DATOS, pid) };
     let mut i = 1u64;
     while i <= 3 {
         let mut l = Line::new();
@@ -124,6 +132,18 @@ pub extern "C" fn demo() -> ! {
     l.bytes(&FIN);
     l.bytes(&NL);
     l.flush();
+
+    // aislamiento: si otro proceso compartiera esta pagina, habria pisado el pid
+    let mut l = Line::new();
+    l.bytes(&PREFIJO);
+    l.num(pid);
+    if unsafe { read_volatile(DATOS) } == pid {
+        l.bytes(&PROPIOS);
+    } else {
+        l.bytes(&COMPARTIDA);
+    }
+    l.bytes(&NL);
+    l.flush();
     exit()
 }
 
@@ -133,5 +153,14 @@ pub extern "C" fn intruso() -> ! {
     write(&INTRUSO);
     let _ = unsafe { read_volatile(0x4008_0000 as *const u32) };
     write(&NO_FALLO);
+    exit()
+}
+
+/// programa que intenta escribir en su propio codigo: esta mapeado como solo lectura
+#[link_section = ".user.text"]
+pub extern "C" fn intruso2() -> ! {
+    write(&INTRUSO2);
+    unsafe { write_volatile(crate::vm::CODE_VA as *mut u8, 0) };
+    write(&NO_FALLO2);
     exit()
 }

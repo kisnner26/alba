@@ -47,6 +47,9 @@ expected=(
   "[intruso] intentando leer memoria del kernel"
   "fallo en modo usuario: tarea"
   "far=0x40080000"
+  "] datos propios intactos"
+  "[intruso2] intentando escribir en su propio codigo"
+  "far=0x80000000"
 )
 
 for e in "${expected[@]}"; do
