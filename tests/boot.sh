@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. cuatro pruebas:
+# arranca alba en qemu y comprueba la salida. cinco pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
 #   4. shell: sesion tecleada por el UART (ls, cat, echo, leer con retroceso, uptime, exit)
+#   5. energia: sin interrupciones de timer en reposo (kernel sin tics)
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -18,8 +19,9 @@ build() {
   python3 tools/mkimage.py "$ELF" "$KERNEL"
 }
 
-# run_qemu <segundos> [memoria, 128M por defecto] [entrada] -> deja la salida en $OUT
-# la entrada (formato printf %b) se envia por el UART 3 segundos despues de arrancar
+# run_qemu <segundos> [memoria, 128M por defecto] [entrada] [entrada2] -> deja la salida en $OUT
+# la entrada (formato printf %b) se envia por el UART 3 segundos despues de arrancar; la segunda,
+# si existe, 6 segundos despues de la primera
 run_qemu() {
   OUT=$(mktemp)
   ./tools/mkdisk.sh "$DISK" >/dev/null
@@ -28,7 +30,9 @@ run_qemu() {
     -drive file="$DISK",if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
     -kernel "$KERNEL")
   if [ -n "${3:-}" ]; then
-    ( sleep 3; printf '%b' "$3"; sleep 20 ) | "${qemu[@]}" >"$OUT" 2>&1 &
+    ( sleep 3; printf '%b' "$3"
+      if [ -n "${4:-}" ]; then sleep 6; printf '%b' "$4"; fi
+      sleep 20 ) | "${qemu[@]}" >"$OUT" 2>&1 &
   else
     "${qemu[@]}" >"$OUT" 2>&1 &
   fi
@@ -139,6 +143,20 @@ for e in "hola desde el disco de alba" "uno dos"; do
 done
 grep -qE "^hola.txt +28 bytes" "$OUT" || { echo "falta la linea de ls para hola.txt"; cat "$OUT"; exit 1; }
 echo "ok: shell verificada"
+
+# --- 5. energia: en reposo el timer no debe despertar al procesador ---
+# sin tics periodicos: 6 s de reposo entre dos `uptime` no pueden costar interrupciones de timer.
+# un kernel con tics a 10 Hz habria sumado unas 60; aqui solo cuenta lanzar el segundo comando.
+run_qemu 14 128M 'uptime\n' 'uptime\n'
+irqs=($(grep -oE "interrupciones de timer: [0-9]+" "$OUT" | grep -oE "[0-9]+$"))
+if [ "${#irqs[@]}" -lt 2 ]; then
+  echo "no se obtuvieron dos mediciones de uptime"; cat "$OUT"; exit 1
+fi
+idle=$((irqs[1] - irqs[0]))
+if [ "$idle" -gt 4 ]; then
+  echo "el timer desperto ${idle} veces en 6 s de reposo (maximo 4)"; cat "$OUT"; exit 1
+fi
+echo "ok: reposo sin tics verificado (${idle} interrupciones de timer en 6 s)"
 
 # deja el binario normal compilado
 build >/dev/null 2>&1
