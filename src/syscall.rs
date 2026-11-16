@@ -11,6 +11,7 @@
 //   9  listdir(indice, buf, nbuf)   nombre de la entrada del directorio; devuelve
 //                                   tamano<<32 | banderas<<16 | largo del nombre
 //   10 ticks()               ticks desde el arranque (1 tick = 100 ms)
+//   11 timer_irqs()          interrupciones de timer desde el arranque (mide cuanto se despierta la cpu)
 //   7  read(fd, ptr, len)    lee una linea de la consola (fd 0); bloquea hasta tenerla
 //   6  exec(ruta, nruta, args, nargs)  lanza un programa del disco; args son cadenas
 //                                      terminadas en cero; devuelve el pid
@@ -39,6 +40,7 @@ pub fn dispatch(nr: u64, a: [u64; 5]) -> u64 {
         8 => readfile(a[0], a[1], a[2], a[3], a[4]),
         9 => listdir(a[0], a[1], a[2]),
         10 => crate::timer::ticks(),
+        11 => crate::timer::irq_count(),
         _ => ERR,
     }
 }

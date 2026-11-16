@@ -90,6 +90,11 @@ pub fn ticks() -> u64 {
     syscall(10, 0, 0, 0, 0)
 }
 
+/// interrupciones de timer desde el arranque: mide cuantas veces ha despertado a la cpu
+pub fn timer_irqs() -> u64 {
+    syscall(11, 0, 0, 0, 0)
+}
+
 /// espera a que termine el proceso `pid` y devuelve su codigo de salida (u64::MAX si no existe)
 pub fn wait(pid: u64) -> u64 {
     syscall(5, pid, 0, 0, 0)
