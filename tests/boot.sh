@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. tres pruebas:
+# arranca alba en qemu y comprueba la salida. cuatro pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
+#   4. entrada por el UART: lectura de una linea con eco y retroceso
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,14 +18,20 @@ build() {
   python3 tools/mkimage.py "$ELF" "$KERNEL"
 }
 
-# run_qemu <segundos> [memoria, 128M por defecto] -> deja la salida en $OUT
+# run_qemu <segundos> [memoria, 128M por defecto] [entrada] -> deja la salida en $OUT
+# la entrada (formato printf %b) se envia por el UART 3 segundos despues de arrancar
 run_qemu() {
   OUT=$(mktemp)
   ./tools/mkdisk.sh "$DISK" >/dev/null
-  qemu-system-aarch64 -machine virt -cpu cortex-a72 -m "${2:-128M}" -nographic \
-    -global virtio-mmio.force-legacy=false \
-    -drive file="$DISK",if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0 \
-    -kernel "$KERNEL" >"$OUT" 2>&1 &
+  local qemu=(qemu-system-aarch64 -machine virt -cpu cortex-a72 -m "${2:-128M}" -nographic
+    -global virtio-mmio.force-legacy=false
+    -drive file="$DISK",if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
+    -kernel "$KERNEL")
+  if [ -n "${3:-}" ]; then
+    ( sleep 3; printf '%b' "$3"; sleep 20 ) | "${qemu[@]}" >"$OUT" 2>&1 &
+  else
+    "${qemu[@]}" >"$OUT" 2>&1 &
+  fi
   local pid=$!
   sleep "$1"
   kill "$pid" 2>/dev/null || true
@@ -45,7 +52,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS01\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 8 archivos"
+  "albafs: 9 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
@@ -68,6 +75,7 @@ expected=(
   "[eco] argv[2]=dos tres"
   "termino con codigo 7"
   "esperar un pid inexistente da error"
+  "[leer] escribe algo:"
   "exec basura: rechazado (no es un ELF)"
   "exec hola.txt: rechazado (no es ejecutable)"
   "exec noexiste: rechazado (no existe)"
@@ -106,6 +114,13 @@ for e in "tamano=256 MiB" "de 262144 KiB"; do
   grep -qF -- "$e" "$OUT" || { echo "falta con 256M: $e"; cat "$OUT"; exit 1; }
 done
 echo "ok: RAM dinamica verificada"
+
+# --- 4. consola: entrada por interrupcion del UART con eco y retroceso ---
+# se teclea "holx", retroceso, "a alba" e intro: el programa debe recibir "hola alba"
+build
+run_qemu 7 128M 'holx\x7fa alba\n'
+grep -qF "[leer] recibi: hola alba" "$OUT" || { echo "falta: [leer] recibi: hola alba"; cat "$OUT"; exit 1; }
+echo "ok: entrada de consola verificada"
 
 # deja el binario normal compilado
 build >/dev/null 2>&1
