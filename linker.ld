@@ -34,17 +34,7 @@ SECTIONS
     . += 0x10000;
     __stack_top = .;
 
-    /* imagen de los programas de usuario: se carga aqui (LMA) y el cargador (vm.rs) la copia
-       a paginas propias de cada proceso, donde se ve en 0x80000000 (VMA) */
-    . = ALIGN(4096);
-    __user_load = .;
-    .user 0x80000000 : AT(__user_load) {
-        KEEP(*(.user.text*))
-        KEEP(*(.user.rodata*))
-    }
-    __user_size = SIZEOF(.user);
-    __user_load_end = __user_load + __user_size;
-    __image_size = __user_load_end - __text_start;
+    __image_size = __stack_top - __text_start;
 
     /DISCARD/ : { *(.comment) *(.eh_frame*) }
 }

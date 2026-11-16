@@ -71,6 +71,7 @@ macro_rules! println {
 }
 
 mod blk;
+mod elf;
 mod fdt;
 mod fs;
 mod gic;
@@ -82,7 +83,6 @@ mod sched;
 mod syscall;
 mod timer;
 mod trap;
-mod user;
 mod virtio;
 mod vm;
 
@@ -225,10 +225,13 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
     sched::spawn(demo_b);
     sched::spawn(demo_busy_1);
     sched::spawn(demo_busy_2);
-    sched::spawn_user(user::demo as *const () as usize);
-    sched::spawn_user(user::demo as *const () as usize);
-    sched::spawn_user(user::intruso as *const () as usize);
-    sched::spawn_user(user::intruso2 as *const () as usize);
+    // programas de usuario cargados desde el disco (dos copias de hola: cada una en su espacio)
+    for prog in ["hola", "hola", "intruso", "intruso2", "basura", "hola.txt", "noexiste"] {
+        match sched::exec(prog) {
+            Ok(pid) => println!("exec {}: pid {}", prog, pid),
+            Err(e) => println!("exec {}: rechazado ({})", prog, e),
+        }
+    }
 
     unsafe { core::arch::asm!("msr daifclr, #2") }; // desenmascara irq
 

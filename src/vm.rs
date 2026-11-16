@@ -1,16 +1,19 @@
-// espacios de direcciones de procesos de usuario.
+// espacios de direcciones de procesos de usuario y cargador de ejecutables ELF.
 //
 // cada proceso tiene sus propias tablas (nivel 1, 2 y 3) y un ASID. las dos primeras entradas
 // del nivel 1 (dispositivos y RAM identidad) se comparten con el kernel; la tercera apunta a las
-// tablas propias del proceso:
+// tablas propias del proceso, que cubren 2 MiB:
 //
-//   0x8000_0000  codigo y datos de solo lectura de la imagen de usuario   R-X (EL0)
-//   0x8010_0000  una pagina de datos                                      RW- (EL0)
-//   0x8020_0000  tope de la pila (crece hacia abajo, 2 paginas)           RW- (EL0)
+//   0x8000_0000 .. 0x801f_c000   segmentos del programa, cada uno con sus permisos (W^X)
+//   0x801f_c000                  pagina de guarda (sin mapear)
+//   0x801f_e000 .. 0x8020_0000   pila (2 paginas, RW sin ejecucion); el tope es la direccion inicial
 //
 // todo lo demas esta sin mapear: una lectura fuera de estas regiones da un fallo de pagina.
-// el cargador copia la imagen embebida en el kernel (seccion .user) a paginas nuevas y limpias.
+// el cargador valida el ELF, copia cada segmento a paginas nuevas y puestas a cero (lo que
+// sobra de memsz sobre filesz, el .bss, queda en ceros) y rechaza segmentos que sean a la vez
+// escribibles y ejecutables.
 
+use crate::elf::{self, Elf, PF_W, PF_X};
 use crate::mmu::{self, AF, AP_EL0, AP_RO, NG, PAGE_DESC, PXN, TABLE, UXN};
 use crate::pmm::{self, Zone, PAGE};
 use alloc::vec::Vec;
@@ -18,25 +21,12 @@ use core::arch::asm;
 use core::ptr::write_bytes;
 
 pub const CODE_VA: usize = 0x8000_0000;
-pub const DATA_VA: usize = 0x8010_0000;
 pub const STACK_TOP: usize = 0x8020_0000;
 const STACK_PAGES: usize = 2;
-const MAX_CODE: usize = DATA_VA - CODE_VA;
-
-extern "C" {
-    static __user_load: u8;
-    static __user_size: u8; // simbolo absoluto: su direccion es el tamano
-}
-
-/// imagen de los programas de usuario, tal como la dejo el linker dentro del kernel
-fn image() -> &'static [u8] {
-    unsafe {
-        core::slice::from_raw_parts(
-            core::ptr::addr_of!(__user_load),
-            core::ptr::addr_of!(__user_size) as usize,
-        )
-    }
-}
+const STACK_BOTTOM: usize = STACK_TOP - STACK_PAGES * PAGE;
+/// los segmentos deben acabar antes de la pagina de guarda que precede a la pila
+const SEGMENTS_END: usize = STACK_BOTTOM - PAGE;
+const SPAN_PAGES: usize = (STACK_TOP - CODE_VA) / PAGE; // 512: lo que cubre un nivel 3
 
 // ASIDs de 8 bits; el 0 es del kernel
 static mut ASIDS: [bool; 256] = [false; 256];
@@ -51,8 +41,8 @@ fn alloc_asid() -> Option<u16> {
 }
 
 pub struct AddrSpace {
-    pages: Vec<(usize, usize)>, // (direccion fisica, paginas): todo lo que hay que liberar
-    code_len: usize,
+    pages: Vec<(usize, usize)>,   // (direccion fisica, paginas): todo lo que hay que liberar
+    regions: Vec<(usize, usize)>, // (direccion virtual, bytes) mapeados: para validar punteros
     asid: u16,
     ttbr: u64,
 }
@@ -66,29 +56,29 @@ fn put(table: usize, index: usize, value: u64) {
 }
 
 impl AddrSpace {
-    pub fn new() -> Option<AddrSpace> {
-        let asid = alloc_asid()?;
-        let mut sp = AddrSpace { pages: Vec::new(), code_len: image().len(), asid, ttbr: 0 };
-        if sp.build().is_none() {
-            sp.destroy();
-            return None;
+    /// carga un ejecutable ELF en un espacio nuevo. devuelve el espacio y el punto de entrada.
+    pub fn from_elf(data: &[u8]) -> Result<(AddrSpace, usize), &'static str> {
+        let elf = elf::parse(data)?;
+        let asid = alloc_asid().ok_or("no quedan ASIDs")?;
+        let mut sp = AddrSpace { pages: Vec::new(), regions: Vec::new(), asid, ttbr: 0 };
+        match sp.build(data, &elf) {
+            Ok(()) => Ok((sp, elf.entry)),
+            Err(e) => {
+                sp.destroy();
+                Err(e)
+            }
         }
-        Some(sp)
     }
 
     /// reserva paginas contiguas ya puestas a cero (no se filtra contenido de otros procesos)
-    fn alloc(&mut self, zone: Zone, n: usize) -> Option<usize> {
-        let pa = pmm::alloc_zone(zone, n)?;
+    fn alloc(&mut self, zone: Zone, n: usize) -> Result<usize, &'static str> {
+        let pa = pmm::alloc_zone(zone, n).ok_or("sin memoria")?;
         unsafe { write_bytes(pa as *mut u8, 0, n * PAGE) };
         self.pages.push((pa, n));
-        Some(pa)
+        Ok(pa)
     }
 
-    fn build(&mut self) -> Option<()> {
-        let img = image();
-        if img.len() > MAX_CODE {
-            return None;
-        }
+    fn build(&mut self, data: &[u8], elf: &Elf) -> Result<(), &'static str> {
         let l1 = self.alloc(Zone::Kernel, 1)?;
         let l2 = self.alloc(Zone::Kernel, 1)?;
         let l3 = self.alloc(Zone::Kernel, 1)?;
@@ -98,28 +88,58 @@ impl AddrSpace {
         put(l1, 2, l2 as u64 | TABLE);
         put(l2, 0, l3 as u64 | TABLE);
 
-        // codigo: copiado de la imagen, solo lectura y ejecutable (W^X)
-        let n = img.len().div_ceil(PAGE).max(1);
-        let code = self.alloc(Zone::User, n)?;
-        unsafe { core::ptr::copy_nonoverlapping(img.as_ptr(), code as *mut u8, img.len()) };
-        mmu::sync_icache(code, n * PAGE);
-        for i in 0..n {
-            put(l3, i, desc(code + i * PAGE, AP_EL0 | AP_RO | PXN));
+        let mut mapped = [false; SPAN_PAGES];
+        let mut entry_ok = false;
+        for seg in &elf.segments {
+            if seg.flags & PF_W != 0 && seg.flags & PF_X != 0 {
+                return Err("segmento escribible y ejecutable (viola W^X)");
+            }
+            let end = seg.vaddr.checked_add(seg.memsz).ok_or("segmento invalido")?;
+            if seg.vaddr % PAGE != 0 || seg.vaddr < CODE_VA || end > SEGMENTS_END {
+                return Err("segmento fuera de la region de usuario o sin alinear");
+            }
+            let first = (seg.vaddr - CODE_VA) / PAGE;
+            let n = seg.memsz.div_ceil(PAGE);
+            if mapped[first..first + n].iter().any(|&m| m) {
+                return Err("segmentos solapados");
+            }
+            mapped[first..first + n].iter_mut().for_each(|m| *m = true);
+
+            let pa = self.alloc(Zone::User, n)?;
+            unsafe {
+                core::ptr::copy_nonoverlapping(data[seg.offset..].as_ptr(), pa as *mut u8, seg.filesz);
+            }
+            let flags = if seg.flags & PF_X != 0 {
+                mmu::sync_icache(pa, n * PAGE);
+                if (seg.vaddr..end).contains(&elf.entry) {
+                    entry_ok = true;
+                }
+                AP_EL0 | AP_RO | PXN // texto: lectura y ejecucion
+            } else if seg.flags & PF_W != 0 {
+                AP_EL0 | PXN | UXN // datos: lectura y escritura
+            } else {
+                AP_EL0 | AP_RO | PXN | UXN // rodata: solo lectura
+            };
+            for i in 0..n {
+                put(l3, first + i, desc(pa + i * PAGE, flags));
+            }
+            self.regions.push((seg.vaddr, seg.memsz));
+        }
+        if !entry_ok {
+            return Err("el punto de entrada no cae en un segmento ejecutable");
         }
 
-        // una pagina de datos y la pila: lectura y escritura, sin ejecucion
-        let rw = AP_EL0 | PXN | UXN;
-        let data = self.alloc(Zone::User, 1)?;
-        put(l3, (DATA_VA - CODE_VA) / PAGE, desc(data, rw));
+        // pila: lectura y escritura, sin ejecucion
         let stack = self.alloc(Zone::User, STACK_PAGES)?;
-        let first = (STACK_TOP - CODE_VA) / PAGE - STACK_PAGES;
+        let first = (STACK_BOTTOM - CODE_VA) / PAGE;
         for i in 0..STACK_PAGES {
-            put(l3, first + i, desc(stack + i * PAGE, rw));
+            put(l3, first + i, desc(stack + i * PAGE, AP_EL0 | PXN | UXN));
         }
+        self.regions.push((STACK_BOTTOM, STACK_PAGES * PAGE));
 
         unsafe { asm!("dsb ishst") }; // las tablas deben ser visibles para el recorrido de tablas
         self.ttbr = l1 as u64 | (self.asid as u64) << 48;
-        Some(())
+        Ok(())
     }
 
     /// valor para TTBR0 (tabla base + ASID)
@@ -132,12 +152,7 @@ impl AddrSpace {
         let Some(end) = ptr.checked_add(len) else {
             return false;
         };
-        let regions = [
-            (CODE_VA, self.code_len),
-            (DATA_VA, PAGE),
-            (STACK_TOP - STACK_PAGES * PAGE, STACK_PAGES * PAGE),
-        ];
-        regions.iter().any(|&(start, size)| ptr >= start && end <= start + size)
+        self.regions.iter().any(|&(start, size)| ptr >= start && end <= start + size)
     }
 
     /// libera tablas, paginas y ASID. no puede estar activo en este core.

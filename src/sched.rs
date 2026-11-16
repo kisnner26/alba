@@ -10,6 +10,7 @@
 // toda mutacion del planificador ocurre con irq enmascaradas (un solo core).
 
 use crate::vm::{self, AddrSpace};
+use crate::fs;
 use crate::{irq, mmu, pmm, timer};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use core::arch::global_asm;
@@ -162,11 +163,16 @@ pub fn spawn(f: fn()) -> usize {
     new_task(f as usize, 0, task_trampoline as *const () as usize, None)
 }
 
-/// proceso de usuario: espacio de direcciones propio con la imagen cargada; arranca en EL0
-/// en `entry` (direccion virtual dentro de la imagen) con la pila en vm::STACK_TOP
-pub fn spawn_user(entry: usize) -> usize {
-    let space = AddrSpace::new().expect("sin memoria para el proceso");
-    new_task(entry, vm::STACK_TOP, task_user_trampoline as *const () as usize, Some(space))
+/// ejecuta un programa del disco: lo lee de albafs, lo carga en un espacio de direcciones
+/// propio y crea el proceso, que arranca en EL0 en el punto de entrada del ELF
+pub fn exec(name: &str) -> Result<usize, &'static str> {
+    let file = fs::find(name).ok_or("no existe")?;
+    if file.flags & fs::FLAG_EXEC == 0 {
+        return Err("no es ejecutable");
+    }
+    let data = fs::read(name).ok_or("error de lectura")?;
+    let (space, entry) = AddrSpace::from_elf(&data)?;
+    Ok(new_task(entry, vm::STACK_TOP, task_user_trampoline as *const () as usize, Some(space)))
 }
 
 /// el rango de usuario cae dentro de una region mapeada del proceso actual
