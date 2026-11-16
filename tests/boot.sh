@@ -23,14 +23,20 @@ expected=(
   "[b] fin"
   "[ocupada-1]"
   "[ocupada-2]"
+  "[usuario pid="
+  "] iteracion 3"
+  "] fin"
+  "[intruso] intentando leer memoria del kernel"
+  "fallo en modo usuario: tarea"
+  "far=0x40080000"
 )
 
 fail=0
 for e in "${expected[@]}"; do
   grep -qF -- "$e" "$OUT" || { echo "falta: $e"; fail=1; }
 done
-if grep -qE "excepcion|panic" "$OUT"; then
-  echo "la salida contiene una excepcion o panic"
+if grep -qE "excepcion|panic|ERROR" "$OUT"; then
+  echo "la salida contiene una excepcion, panic o ERROR"
   fail=1
 fi
 
