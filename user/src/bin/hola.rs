@@ -26,5 +26,5 @@ pub extern "C" fn _start() -> ! {
     } else {
         println!("[usuario pid={}] ERROR: memoria compartida", pid);
     }
-    alba::exit()
+    alba::exit(0)
 }

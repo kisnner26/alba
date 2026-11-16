@@ -14,6 +14,14 @@ name = "hola"
 path = "src/bin/hola.rs"
 
 [[bin]]
+name = "eco"
+path = "src/bin/eco.rs"
+
+[[bin]]
+name = "lanzador"
+path = "src/bin/lanzador.rs"
+
+[[bin]]
 name = "intruso"
 path = "src/bin/intruso.rs"
 
