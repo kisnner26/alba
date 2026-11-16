@@ -19,13 +19,19 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 | `0x4008_0000` | inicio del kernel (`.text`, `.rodata`, `.data`, `.bss`) |
 | tras `.bss` | pila de arranque de 64 KiB (`__stack_top`); después, páginas del kernel administradas por `pmm` |
 | `0x4100_0000` | sección `.user`: código y datos de los programas de usuario (EL0 lectura, escritura, ejecución) |
-| tras `.user` - `0x4800_0000` | zona de usuario: pilas y datos, EL0 lectura y escritura, sin ejecución |
+| tras `.user` - fin de RAM (del DTB, hasta 1 GiB) | zona de usuario: pilas y datos, EL0 lectura y escritura, sin ejecución |
 
 ## flujo de arranque
 
-1. QEMU carga el ELF en `0x4008_0000` y salta a `_start` en EL1.
+1. QEMU carga la imagen plana (`alba.bin`, generada por `tools/mkimage.py`) en `0x4008_0000`, reconoce la cabecera arm64 (`ARM\x64` en el offset 56) y salta a `_start` en EL1 con la dirección del DTB en `x0`.
 2. `_start` (ensamblador): solo el core 0 continúa, los demás ejecutan `wfe`. Configura `sp`, limpia `.bss`, salta a `kmain`.
-3. `kmain`: enciende la MMU, inicializa la memoria física, instala vectores, configura el GIC y el timer, crea las tareas, desenmascara interrupciones y queda como tarea idle (`wfe`).
+3. `kmain(dtb)`: lee la RAM del DTB (`fdt.rs`), enciende la MMU, inicializa la memoria física, instala vectores, configura el GIC y el timer, crea las tareas, desenmascara interrupciones y queda como tarea idle (`wfe`).
+
+## device tree
+
+- el DTB lo carga el firmware (QEMU lo deja en RAM, dentro de la zona de usuario). `fdt::ram` recorre el bloque de estructura y devuelve base y tamaño del nodo `memory`. solo hace lecturas alineadas de 32 bits y de bytes, así que funciona con la MMU apagada.
+- `pmm::reserve` marca las páginas del DTB como ocupadas para que no se entreguen a un proceso.
+- si no hay DTB válido se asumen 128 MiB.
 
 ## excepciones e interrupciones
 
@@ -79,4 +85,4 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 
 ## pruebas
 
-`tests/boot.sh` hace dos pruebas en QEMU: (1) arranque normal con las líneas esperadas, tareas, modo usuario, intruso detenido y ninguna excepción; (2) con la feature `wx-test`, escribir en el texto del kernel debe dar un fallo de datos (clase `0x25`). corre en cada push en GitHub Actions.
+`tests/boot.sh` hace tres pruebas en QEMU: (1) arranque normal con las líneas esperadas, tareas, modo usuario, intruso detenido y ninguna excepción; (2) con la feature `wx-test`, escribir en el texto del kernel debe dar un fallo de datos (clase `0x25`); (3) con `-m 256M` el kernel debe leer 256 MiB del DTB. corre en cada push en GitHub Actions.

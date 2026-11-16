@@ -42,7 +42,7 @@ versión 0.0.1. corre en aarch64 sobre la máquina `virt` de QEMU.
 | 3 | MMU con cachés, gestor de páginas físicas, heap del kernel | listo |
 | 4 | tareas del kernel, planificador round-robin con apropiación, sleep, exit | listo |
 | 5 | modo usuario (EL0), llamadas al sistema, aislamiento de memoria kernel/usuario | listo |
-| 6 | memoria fina: W^X en el kernel con páginas de 4 KiB | en curso (W^X listo; faltan espacios por proceso, cargador y DTB) |
+| 6 | memoria fina: W^X en el kernel con páginas de 4 KiB, RAM leída del DTB | en curso (W^X y lectura del DTB listos; faltan espacios por proceso y cargador) |
 
 salida actual al arrancar:
 
@@ -70,6 +70,8 @@ salida actual al arrancar:
 - páginas físicas de 4 KiB con bitmap, con reserva de rangos contiguos
 - heap por clases de tamaño de 16 a 2048 bytes con listas libres; páginas contiguas para tamaños mayores
 
+**arranque estándar** ([src/fdt.rs](src/fdt.rs), [tools/mkimage.py](tools/mkimage.py)): alba empieza con la cabecera de imagen arm64 (el protocolo de arranque de linux). QEMU y los firmwares reales la reconocen y entregan el device tree en `x0`; el kernel lo recorre con un lector propio para saber cuánta RAM hay y reserva el propio DTB. la imagen plana la genera un script propio a partir del ELF, sin `objcopy`.
+
 **modo usuario y llamadas al sistema** ([src/syscall.rs](src/syscall.rs), [src/user.rs](src/user.rs)):
 
 - las tareas de usuario corren en EL0 con su propia pila de usuario y pila de kernel
@@ -89,7 +91,7 @@ salida actual al arrancar:
 limitaciones conocidas, a resolver en las próximas etapas:
 
 - los programas de usuario viven en la imagen del kernel (sección `.user`) y comparten un único espacio de direcciones; faltan espacios de direcciones por proceso y un cargador de programas
-- el tamaño de RAM está fijo en 128 MiB; falta leerlo del DTB
+- la RAM máxima soportada es 1 GiB (una tabla de nivel 2)
 - el heap no es seguro de usar desde manejadores de interrupción
 - solo un core activo
 
@@ -100,7 +102,7 @@ limitaciones conocidas, a resolver en las próximas etapas:
 3. memoria física, MMU y heap (listo)
 4. tareas, planificador y cambio de contexto (listo)
 5. modo usuario (EL0) y llamadas al sistema (listo)
-6. memoria fina: W^X con tablas de 4 KiB (listo), espacio de direcciones por proceso, cargador de programas, lectura del DTB
+6. memoria fina: W^X con tablas de 4 KiB (listo), espacio de direcciones por proceso, cargador de programas (lectura del DTB: listo)
 7. drivers virtio: disco, red, teclado y ratón; sistema de archivos propio
 8. shell, biblioteca estándar propia y programas de usuario
 9. GPU virtio, framebuffer, compositor y escritorio estilo macOS
@@ -118,7 +120,8 @@ requisitos en macOS (apple silicon):
 
 ejecutar:
 
-    make run
+    make run          # compila, genera la imagen plana y la arranca en QEMU
+    make test         # pruebas de arranque, modo usuario, W^X y RAM
 
 para salir de QEMU: `ctrl+a`, luego `x`.
 
@@ -132,11 +135,13 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
     ├── Cargo.toml
     ├── linker.ld          mapa de memoria del kernel
     ├── Makefile
+    ├── tools/mkimage.py   genera la imagen plana a partir del ELF
     ├── build.rs           reenlaza si cambia linker.ld
     ├── tests/boot.sh      pruebas de arranque, modo usuario y W^X
     ├── docs/ARQUITECTURA.md
     └── src/
         ├── main.rs        arranque, UART, kmain
+        ├── fdt.rs         lector de device tree
         ├── trap.rs        vectores y manejadores de excepciones
         ├── gic.rs         controlador de interrupciones
         ├── timer.rs       temporizador del sistema
