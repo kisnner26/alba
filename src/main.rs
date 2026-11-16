@@ -141,9 +141,13 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
         Some(r) => println!("ram segun dtb: base={:#x} tamano={} MiB", r.base, r.size >> 20),
         None => println!("sin dtb valido"),
     }
-    mmu::init();
+    let ram_size = fdt::ram(dtb).map_or(128 << 20, |r| r.size);
+    mmu::init(ram_size);
 
     pmm::init();
+    if fdt::is_valid(dtb) {
+        pmm::reserve(dtb, fdt::total_size(dtb)); // el DTB vive en RAM; no entregarlo a nadie
+    }
     println!(
         "memoria: {} KiB libres de {} KiB",
         pmm::free_kib(),

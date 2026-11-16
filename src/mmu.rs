@@ -4,7 +4,7 @@
 //   0x4000_0000..0x4100_0000  zona del kernel (16 MiB). solo EL1, con W^X:
 //       texto RX, rodata R, datos/bss/pilas/heap RW sin ejecucion (paginas de 4 KiB en el primer bloque)
 //   0x4100_0000..0x4120_0000  codigo de usuario (seccion .user): EL0 lectura/escritura/ejecucion
-//   0x4120_0000..0x4800_0000  datos de usuario: EL0 lectura/escritura, sin ejecucion
+//   0x4120_0000..fin de RAM   datos de usuario: EL0 lectura/escritura, sin ejecucion
 //
 // regla del procesador: una pagina escribible desde EL0 nunca se ejecuta en EL1.
 // por eso el kernel y el codigo de usuario viven en bloques distintos.
@@ -40,15 +40,26 @@ const UXN: u64 = 1 << 54;
 
 pub const RAM_BASE: usize = 0x4000_0000;
 pub const KERNEL_ZONE_END: usize = 0x4100_0000;
-pub const RAM_END: usize = 0x4800_0000;
+/// maximo que cubre la tabla de nivel 2 (un bloque de 1 GiB)
+pub const MAX_RAM: usize = 1 << 30;
+static mut RAM_END: usize = RAM_BASE + (128 << 20);
 const BLOCK: usize = 2 << 20;
 
 fn addr(sym: &u8) -> usize {
     sym as *const u8 as usize
 }
 
-pub fn init() {
+/// fin de la RAM (se fija en init a partir del tamano que informa el DTB)
+pub fn ram_end() -> usize {
+    unsafe { RAM_END }
+}
+
+pub fn init(ram_size: usize) {
     unsafe {
+        let ram_size = (ram_size.min(MAX_RAM)) & !(BLOCK - 1);
+        assert!(ram_size >= 32 << 20, "se necesitan al menos 32 MiB de RAM");
+        RAM_END = RAM_BASE + ram_size;
+
         let l1 = &mut *core::ptr::addr_of_mut!(L1);
         let l2 = &mut *core::ptr::addr_of_mut!(L2);
 
@@ -57,7 +68,7 @@ pub fn init() {
         l1.0[1] = core::ptr::addr_of!(L2) as u64 | TABLE;
 
         let kernel_blocks = (KERNEL_ZONE_END - RAM_BASE) / BLOCK;
-        let all_blocks = (RAM_END - RAM_BASE) / BLOCK;
+        let all_blocks = ram_size / BLOCK;
         // primer bloque: paginas de 4 KiB con W^X. nada es a la vez escribible y ejecutable.
         let l3 = &mut *core::ptr::addr_of_mut!(L3);
         let (text_s, text_e) = (addr(&__text_start), addr(&__text_end));

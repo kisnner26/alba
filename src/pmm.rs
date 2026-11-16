@@ -3,11 +3,15 @@
 // dos zonas: kernel (solo EL1) y usuario (accesible desde EL0), segun el mapa de mmu.rs.
 // por ahora asume 128 MiB de RAM (-m 128M en QEMU); luego se lee del DTB.
 
-use crate::mmu::{KERNEL_ZONE_END, RAM_BASE, RAM_END};
+use crate::mmu::{self, KERNEL_ZONE_END, MAX_RAM, RAM_BASE};
 use core::ptr::{addr_of, addr_of_mut};
 
 pub const PAGE: usize = 4096;
-const NPAGES: usize = (RAM_END - RAM_BASE) / PAGE;
+const MAX_PAGES: usize = MAX_RAM / PAGE;
+
+fn npages() -> usize {
+    (mmu::ram_end() - RAM_BASE) / PAGE
+}
 
 #[derive(Clone, Copy)]
 pub enum Zone {
@@ -26,14 +30,14 @@ struct ZoneState {
     hint: usize,
 }
 
-static mut BITMAP: [u64; NPAGES / 64] = [!0; NPAGES / 64];
+static mut BITMAP: [u64; MAX_PAGES / 64] = [0; MAX_PAGES / 64];
 static mut ZONES: [ZoneState; 2] = [
     ZoneState { lo: 0, hi: 0, hint: 0 },
     ZoneState { lo: 0, hi: 0, hint: 0 },
 ];
 static mut FREE: usize = 0;
 
-unsafe fn bitmap() -> &'static mut [u64; NPAGES / 64] {
+unsafe fn bitmap() -> &'static mut [u64; MAX_PAGES / 64] {
     &mut *addr_of_mut!(BITMAP)
 }
 
@@ -63,12 +67,15 @@ fn align_up(a: usize) -> usize {
 
 pub fn init() {
     unsafe {
+        for p in 0..npages() {
+            set(p, true);
+        }
         let kfirst = page_of(align_up(addr_of!(__stack_top) as usize));
         let kend = page_of(KERNEL_ZONE_END);
         let ufirst = page_of(align_up(addr_of!(__user_end) as usize));
         let z = zones();
         z[0] = ZoneState { lo: kfirst, hi: kend, hint: kfirst };
-        z[1] = ZoneState { lo: ufirst, hi: NPAGES, hint: ufirst };
+        z[1] = ZoneState { lo: ufirst, hi: npages(), hint: ufirst };
         for zone in z.iter() {
             for p in zone.lo..zone.hi {
                 set(p, false);
@@ -131,10 +138,24 @@ pub fn free_pages(addr: usize, n: usize) {
     }
 }
 
+/// marca como ocupado un rango fisico que no debe entregarse (por ejemplo el DTB)
+pub fn reserve(addr: usize, len: usize) {
+    unsafe {
+        let first = page_of(addr & !(PAGE - 1));
+        let last = page_of(align_up(addr + len));
+        for p in first..last.min(npages()) {
+            if !used(p) {
+                set(p, true);
+                FREE -= 1;
+            }
+        }
+    }
+}
+
 pub fn free_kib() -> usize {
     unsafe { FREE * PAGE / 1024 }
 }
 
 pub fn total_kib() -> usize {
-    (RAM_END - RAM_BASE) / 1024
+    (mmu::ram_end() - RAM_BASE) / 1024
 }

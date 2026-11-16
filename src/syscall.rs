@@ -31,7 +31,7 @@ pub fn dispatch(nr: u64, a: [u64; 3]) -> u64 {
 
 /// el rango debe estar dentro de la memoria de usuario: nunca se confia en un puntero de EL0
 fn user_range_ok(ptr: u64, len: u64) -> bool {
-    let (lo, hi) = (mmu::KERNEL_ZONE_END as u64, mmu::RAM_END as u64);
+    let (lo, hi) = (mmu::KERNEL_ZONE_END as u64, mmu::ram_end() as u64);
     len <= 4096 && ptr >= lo && ptr.checked_add(len).is_some_and(|end| end <= hi)
 }
 
