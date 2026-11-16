@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. cinco pruebas:
+# arranca alba en qemu y comprueba la salida. seis pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
 #   4. shell: sesion tecleada por el UART (ls, cat, echo, leer con retroceso, uptime, exit)
 #   5. energia: sin interrupciones de timer en reposo (kernel sin tics)
+#   6. rendimiento: lanzar programas seguidos es casi instantaneo y apenas despierta al timer
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -157,6 +158,21 @@ if [ "$idle" -gt 4 ]; then
   echo "el timer desperto ${idle} veces en 6 s de reposo (maximo 4)"; cat "$OUT"; exit 1
 fi
 echo "ok: reposo sin tics verificado (${idle} interrupciones de timer en 6 s)"
+
+# --- 6. rendimiento: lanzar programas debe ser casi instantaneo ---
+# seis `uptime` seguidos (cada uno: leer el ELF del disco, cargarlo, ejecutarlo y esperarlo) no
+# pueden consumir mas de 500 ms de reloj ni mas de 3 interrupciones de timer
+run_qemu 7 128M 'uptime\nuptime\nuptime\nuptime\nuptime\nuptime\n'
+t=($(grep -oE "desde hace [0-9]+\.[0-9]" "$OUT" | grep -oE "[0-9]+\.[0-9]$" | tr -d '.'))
+q=($(grep -oE "interrupciones de timer: [0-9]+" "$OUT" | grep -oE "[0-9]+$"))
+if [ "${#t[@]}" -lt 6 ]; then echo "faltan mediciones de uptime"; cat "$OUT"; exit 1; fi
+span=$((t[5] - t[0]))      # en decimas de segundo
+wake=$((q[5] - q[0]))
+if [ "$span" -gt 5 ] || [ "$wake" -gt 3 ]; then
+  echo "lanzar 5 programas tardo ${span}/10 s y causo ${wake} interrupciones de timer (maximo 0,5 s y 3)"
+  cat "$OUT"; exit 1
+fi
+echo "ok: rendimiento verificado (5 programas lanzados en ${span}/10 s, ${wake} interrupciones de timer)"
 
 # deja el binario normal compilado
 build >/dev/null 2>&1
