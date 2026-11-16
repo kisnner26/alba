@@ -82,12 +82,28 @@ fn demo_b() {
 }
 
 // nunca cede la cpu: demuestra que el timer la recupera
-fn demo_busy() {
+fn busy(name: &str) -> ! {
     let mut n: u64 = 0;
     loop {
         n = core::hint::black_box(n.wrapping_add(1));
         if n % 100_000_000 == 0 {
-            println!("[ocupada] sigo corriendo, ticks={}", timer::ticks());
+            println!("[{}] n={} ticks={}", name, n, timer::ticks());
+        }
+    }
+}
+
+fn demo_busy_1() {
+    busy("ocupada-1")
+}
+
+// codigo distinto a demo_busy_1 a proposito: si el estado de excepcion de una
+// tarea se mezclara con el de otra, esta tarea saltaria al codigo ajeno
+fn demo_busy_2() {
+    let mut m: u64 = 5;
+    loop {
+        m = core::hint::black_box(m.wrapping_add(3));
+        if m % 300_000_000 == 5 {
+            println!("[ocupada-2] m={} ticks={}", m, timer::ticks());
         }
     }
 }
@@ -138,7 +154,8 @@ pub extern "C" fn kmain() -> ! {
     sched::init();
     sched::spawn(demo_a);
     sched::spawn(demo_b);
-    sched::spawn(demo_busy);
+    sched::spawn(demo_busy_1);
+    sched::spawn(demo_busy_2);
 
     unsafe { core::arch::asm!("msr daifclr, #2") }; // desenmascara irq
 
