@@ -96,7 +96,9 @@ pub fn irq() {
     }
 }
 
-/// lee bytes de la consola; bloquea hasta que haya una linea completa. devuelve cuantos copio.
+/// lee una linea de la consola (con su '\n'); bloquea hasta que haya una completa.
+/// si el buffer es mas corto que la linea, el resto se entrega en la llamada siguiente.
+/// devuelve cuantos bytes copio.
 pub fn read(buf: &mut [u8]) -> usize {
     if buf.is_empty() {
         return 0;
@@ -105,11 +107,16 @@ pub fn read(buf: &mut [u8]) -> usize {
         let g = irq::save();
         let c = con();
         if c.tail != c.head {
+            // una sola linea por llamada (hasta su '\n'), como una terminal canonica
             let mut n = 0;
             while n < buf.len() && c.tail != c.head {
-                buf[n] = c.ready[c.tail];
+                let b = c.ready[c.tail];
+                buf[n] = b;
                 c.tail = (c.tail + 1) % READY_SIZE;
                 n += 1;
+                if b == b'\n' {
+                    break;
+                }
             }
             irq::restore(g);
             return n;

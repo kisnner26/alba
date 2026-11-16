@@ -167,8 +167,8 @@ extern "C" fn handle_sync_el0(f: &mut Frame) {
     let (esr, elr, far) = read_esr();
     let ec = esr >> 26;
     if ec == EC_SVC64 {
-        // convencion: numero en x8, argumentos en x0-x3, resultado en x0
-        f.x[0] = crate::syscall::dispatch(f.x[8], [f.x[0], f.x[1], f.x[2], f.x[3]]);
+        // convencion: numero en x8, argumentos en x0-x4, resultado en x0
+        f.x[0] = crate::syscall::dispatch(f.x[8], [f.x[0], f.x[1], f.x[2], f.x[3], f.x[4]]);
         return;
     }
     println!(
