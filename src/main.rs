@@ -62,6 +62,7 @@ mod irq;
 mod mmu;
 mod pmm;
 mod sched;
+mod syscall;
 mod timer;
 mod trap;
 

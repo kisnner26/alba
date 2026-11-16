@@ -74,8 +74,8 @@ vectors:
     ventry h_irq
     ventry h_bad
     ventry h_bad
-    ventry h_bad
-    ventry h_bad
+    ventry h_sync_el0
+    ventry h_irq
     ventry h_bad
     ventry h_bad
     ventry h_bad
@@ -87,6 +87,12 @@ vectors:
 h_sync:
     save_regs
     bl handle_sync
+    restore_regs
+    eret
+h_sync_el0:
+    save_regs
+    mov x0, sp
+    bl handle_sync_el0
     restore_regs
     eret
 h_irq:
@@ -142,6 +148,38 @@ extern "C" fn handle_sync() {
         far
     );
     halt();
+}
+
+/// marco guardado en la pila por save_regs (272 bytes)
+#[repr(C)]
+pub struct Frame {
+    pub x: [u64; 31],
+    pub elr: u64,
+    pub spsr: u64,
+    pub sp_el0: u64,
+}
+
+const EC_SVC64: u64 = 0x15;
+
+/// excepciones sincronas que vienen de modo usuario: syscalls y fallos
+#[no_mangle]
+extern "C" fn handle_sync_el0(f: &mut Frame) {
+    let (esr, elr, far) = read_esr();
+    let ec = esr >> 26;
+    if ec == EC_SVC64 {
+        // convencion: numero en x8, argumentos en x0-x2, resultado en x0
+        f.x[0] = crate::syscall::dispatch(f.x[8], [f.x[0], f.x[1], f.x[2]]);
+        return;
+    }
+    println!(
+        "fallo en modo usuario: tarea {} clase={:#04x} esr={:#x} elr={:#x} far={:#x}; tarea terminada",
+        crate::sched::current_id(),
+        ec,
+        esr,
+        elr,
+        far
+    );
+    crate::sched::exit();
 }
 
 #[no_mangle]

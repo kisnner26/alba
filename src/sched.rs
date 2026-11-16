@@ -170,7 +170,10 @@ fn switch_away(mode: Mode) {
     reap();
 }
 
-#[allow(dead_code)]
+pub fn current_id() -> usize {
+    sched().current.as_ref().unwrap().id
+}
+
 pub fn yield_now() {
     let g = irq::save();
     switch_away(Mode::Ready);
