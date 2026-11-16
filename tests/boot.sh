@@ -3,7 +3,7 @@
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
-#   4. entrada por el UART: lectura de una linea con eco y retroceso
+#   4. shell: sesion tecleada por el UART (ls, cat, echo, leer con retroceso, uptime, exit)
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -36,12 +36,14 @@ run_qemu() {
   sleep "$1"
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
+  # la salida serie termina las lineas con \r\n: se normaliza para poder comparar lineas enteras
+  tr -d '\r' <"$OUT" >"$OUT.lf" && mv "$OUT.lf" "$OUT"
 }
 
 fail=0
 
 # --- 1. arranque normal ---
-build
+build --features autotest
 run_qemu "${BOOT_SECS:-12}"
 
 expected=(
@@ -52,7 +54,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS01\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 9 archivos"
+  "albafs: 14 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
@@ -75,7 +77,6 @@ expected=(
   "[eco] argv[2]=dos tres"
   "termino con codigo 7"
   "esperar un pid inexistente da error"
-  "[leer] escribe algo:"
   "exec basura: rechazado (no es un ELF)"
   "exec hola.txt: rechazado (no es ejecutable)"
   "exec noexiste: rechazado (no existe)"
@@ -115,12 +116,29 @@ for e in "tamano=256 MiB" "de 262144 KiB"; do
 done
 echo "ok: RAM dinamica verificada"
 
-# --- 4. consola: entrada por interrupcion del UART con eco y retroceso ---
-# se teclea "holx", retroceso, "a alba" e intro: el programa debe recibir "hola alba"
+# --- 4. shell y consola: entrada por interrupcion del UART, eco, retroceso y programas del disco ---
+# arranque normal (sin autotest): va directo a la shell. se teclea una sesion completa;
+# en "holx" + retroceso + "a alba" el programa leer debe recibir "hola alba"
 build
-run_qemu 7 128M 'holx\x7fa alba\n'
-grep -qF "[leer] recibi: hola alba" "$OUT" || { echo "falta: [leer] recibi: hola alba"; cat "$OUT"; exit 1; }
-echo "ok: entrada de consola verificada"
+run_qemu 10 128M 'ls\ncat hola.txt\necho uno dos\ndesconocido\nleer\nholx\x7fa alba\nuptime\nexit\n'
+sh_expected=(
+  "alba shell. escribe help para ver los comandos."
+  "init: shell lanzada"
+  "[leer] escribe algo:"
+  "[leer] recibi: hola alba"
+  "sh: no encontrado: desconocido"
+  "arriba desde hace"
+)
+for e in "${sh_expected[@]}"; do
+  grep -qF -- "$e" "$OUT" || { echo "falta en la sesion de shell: $e"; cat "$OUT"; exit 1; }
+done
+# salidas que ocupan una linea entera: cat, echo y ls. como la sesion se teclea de golpe, el
+# prompt "alba> " puede quedar delante de la primera salida: se admite como prefijo
+for e in "hola desde el disco de alba" "uno dos"; do
+  grep -qE "^(alba> )?$e$" "$OUT" || { echo "falta linea exacta: $e"; cat "$OUT"; exit 1; }
+done
+grep -qE "^hola.txt +28 bytes" "$OUT" || { echo "falta la linea de ls para hola.txt"; cat "$OUT"; exit 1; }
+echo "ok: shell verificada"
 
 # deja el binario normal compilado
 build >/dev/null 2>&1
