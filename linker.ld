@@ -24,5 +24,14 @@ SECTIONS
     . += 0x10000;
     __stack_top = .;
 
+    /* codigo y datos de los programas de usuario: bloque propio accesible desde EL0 */
+    . = 0x41000000;
+    .user : {
+        KEEP(*(.text.user*))
+        KEEP(*(.rodata.user*))
+    }
+    . = ALIGN(4096);
+    __user_end = .;
+
     /DISCARD/ : { *(.comment) *(.eh_frame*) }
 }
