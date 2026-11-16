@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # arranca alba en qemu y comprueba la salida. tres pruebas:
-#   1. arranque normal: lineas esperadas y ninguna excepcion, panic o ERROR
+#   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
@@ -42,6 +42,9 @@ expected=(
   "memoria:"
   "virtio: ranura"
   "(bloque) version 2"
+  "disco: 2048 sectores de 512 bytes"
+  "disco: sector 0 = \"ALBAFS01\""
+  "disco: escritura y lectura del sector 2047 ok"
   "heap: suma=49995000"
   "[a] fin"
   "[b] fin"
@@ -61,8 +64,8 @@ expected=(
 for e in "${expected[@]}"; do
   grep -qF -- "$e" "$OUT" || { echo "falta: $e"; fail=1; }
 done
-if grep -qE "excepcion|panic|ERROR" "$OUT"; then
-  echo "la salida contiene una excepcion, panic o ERROR"
+if grep -qE "excepcion|panic|ERROR|FALLO" "$OUT"; then
+  echo "la salida contiene una excepcion, panic, ERROR o FALLO"
   fail=1
 fi
 if [ "$fail" -ne 0 ]; then
