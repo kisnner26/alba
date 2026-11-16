@@ -172,6 +172,7 @@ fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>) -> us
     s.next_id += 1;
     let ttbr = space.as_ref().map_or(mmu::kernel_ttbr(), |sp| sp.ttbr());
     s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, wake: 0, wait: None, ret: 0 }));
+    reprogram(s);
     irq::restore(g);
     id
 }
@@ -241,6 +242,26 @@ fn reap() {
     }
 }
 
+/// reprograma el timer para el proximo evento que lo necesite, o lo apaga si no hay ninguno:
+/// - hay otras tareas listas: el final del tick actual (turno de 100 ms como maximo)
+/// - hay tareas dormidas: el instante en que despierta la primera
+/// sin ninguno de los dos, el procesador no recibe interrupciones de timer.
+fn reprogram(s: &Sched) {
+    let now = timer::ticks();
+    let mut next = u64::MAX;
+    if !s.ready.is_empty() {
+        next = now + 1;
+    }
+    for t in &s.sleeping {
+        next = next.min(t.wake);
+    }
+    if next == u64::MAX {
+        timer::disarm();
+    } else {
+        timer::arm(next.max(now + 1));
+    }
+}
+
 fn wake_sleepers(s: &mut Sched) {
     let now = timer::ticks();
     let mut i = 0;
@@ -260,7 +281,10 @@ fn switch_away(mode: Mode) {
     wake_sleepers(s);
     let Some(next) = s.ready.pop_front() else {
         match mode {
-            Mode::Ready => return,
+            Mode::Ready => {
+                reprogram(s);
+                return;
+            }
             _ => panic!("no hay tareas listas"),
         }
     };
@@ -275,6 +299,7 @@ fn switch_away(mode: Mode) {
         Mode::Block => s.blocked.push(cur),
         Mode::Dead => s.zombies.push(cur),
     }
+    reprogram(s);
     unsafe { switch_to(old_sp, new_sp) };
     // aqui se vuelve cuando esta tarea retoma la cpu
     reap();
@@ -374,6 +399,7 @@ pub fn wake_input() {
             let mut t = s.blocked.swap_remove(i);
             t.wait = None;
             s.ready.push_back(t);
+            NEED.store(true, Ordering::Relaxed); // que el lector corra en cuanto acabe la irq
         } else {
             i += 1;
         }

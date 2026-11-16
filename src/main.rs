@@ -259,8 +259,10 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
         core::arch::asm!("brk #0")
     };
 
+    // tarea idle: el procesador duerme (wfi) hasta que llegue una interrupcion. con el timer
+    // apagado cuando no hay eventos, en reposo no se despierta ni una vez.
     loop {
-        unsafe { core::arch::asm!("wfe") };
+        unsafe { core::arch::asm!("wfi") };
     }
 }
 
