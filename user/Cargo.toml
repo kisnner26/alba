@@ -26,6 +26,26 @@ name = "leer"
 path = "src/bin/leer.rs"
 
 [[bin]]
+name = "ls"
+path = "src/bin/ls.rs"
+
+[[bin]]
+name = "cat"
+path = "src/bin/cat.rs"
+
+[[bin]]
+name = "echo"
+path = "src/bin/echo.rs"
+
+[[bin]]
+name = "uptime"
+path = "src/bin/uptime.rs"
+
+[[bin]]
+name = "sh"
+path = "src/bin/sh.rs"
+
+[[bin]]
 name = "intruso"
 path = "src/bin/intruso.rs"
 

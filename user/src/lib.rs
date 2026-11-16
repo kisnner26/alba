@@ -11,6 +11,11 @@ use core::panic::PanicInfo;
 
 #[inline(always)]
 pub fn syscall(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+    syscall5(nr, a0, a1, a2, a3, 0)
+}
+
+#[inline(always)]
+pub fn syscall5(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> u64 {
     let ret: u64;
     unsafe {
         asm!(
@@ -20,6 +25,7 @@ pub fn syscall(nr: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
             in("x1") a1,
             in("x2") a2,
             in("x3") a3,
+            in("x4") a4,
             options(nostack),
         );
     }
@@ -54,6 +60,34 @@ pub fn yield_now() {
 /// lee una linea de la consola (con su '\n'); bloquea hasta que haya una. devuelve los bytes leidos.
 pub fn read_line(buf: &mut [u8]) -> usize {
     syscall(7, 0, buf.as_mut_ptr() as u64, buf.len() as u64, 0) as usize
+}
+
+/// lee de un archivo del disco a partir de `offset`. devuelve los bytes leidos (0 = fin) o None
+/// si el archivo no existe.
+pub fn read_file(name: &str, buf: &mut [u8], offset: u64) -> Option<usize> {
+    let r = syscall5(8, name.as_ptr() as u64, name.len() as u64, buf.as_mut_ptr() as u64, buf.len() as u64, offset);
+    if r == u64::MAX {
+        None
+    } else {
+        Some(r as usize)
+    }
+}
+
+/// entrada `index` del directorio: (nombre, tamano en bytes, es ejecutable). None al pasar la ultima.
+pub fn list_dir<'a>(index: u64, name: &'a mut [u8; 48]) -> Option<(&'a str, u32, bool)> {
+    let r = syscall(9, index, name.as_mut_ptr() as u64, name.len() as u64, 0);
+    if r == u64::MAX {
+        return None;
+    }
+    let len = (r & 0xffff) as usize;
+    let flags = (r >> 16) & 0xff;
+    let size = (r >> 32) as u32;
+    Some((core::str::from_utf8(&name[..len]).unwrap_or("?"), size, flags & 1 != 0))
+}
+
+/// ticks desde el arranque (1 tick = 100 ms)
+pub fn ticks() -> u64 {
+    syscall(10, 0, 0, 0, 0)
 }
 
 /// espera a que termine el proceso `pid` y devuelve su codigo de salida (u64::MAX si no existe)
@@ -143,6 +177,13 @@ impl Write for Line {
 }
 
 #[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    let mut line = Line { buf: [0; 128], len: 0 };
+    let _ = line.write_fmt(args);
+    line.flush();
+}
+
+#[doc(hidden)]
 pub fn _println(args: fmt::Arguments) {
     let mut line = Line { buf: [0; 128], len: 0 };
     let _ = line.write_fmt(args);
@@ -151,7 +192,13 @@ pub fn _println(args: fmt::Arguments) {
 }
 
 #[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => { $crate::_print(format_args!($($arg)*)) };
+}
+
+#[macro_export]
 macro_rules! println {
+    () => { $crate::_println(format_args!("")) };
     ($($arg:tt)*) => { $crate::_println(format_args!($($arg)*)) };
 }
 
