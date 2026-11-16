@@ -1,0 +1,16 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: instalar qemu
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm
+      - name: test de arranque
+        run: ./tests/boot.sh
