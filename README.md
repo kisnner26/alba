@@ -6,11 +6,36 @@ no es una distribución de linux, no es un fork de ningún sistema existente y n
 
 ## objetivos
 
-- **eficiencia**: nada corre si no hace falta. sin polling; cuando no hay trabajo el procesador duerme (`wfe`) y despierta por interrupción.
-- **minimalismo**: kernel pequeño, pocas llamadas al sistema, cero dependencias externas dentro del kernel.
-- **rapidez**: arranque en milisegundos y sin inicializar hardware que no se use.
-- **optimización**: asignadores propios, estructuras sin bloqueos donde se pueda, copias evitadas, compilación con optimizaciones altas.
-- **interfaz estilo macOS**: compositor propio con barra de menú, dock, ventanas con sombra y esquinas redondeadas, tipografía propia y animaciones fluidas.
+**prioridad máxima: eficiencia energética.** alba apunta a procesadores ARM de bajo consumo y a una autonomía de batería excepcional. cada decisión se evalúa primero por cuánta energía cuesta, y el rendimiento sale de la misma regla: el trabajo más rápido es el que no se hace, y el procesador más barato es el que duerme.
+
+- **el procesador duerme siempre que puede.** el kernel no tiene tics periódicos: el temporizador solo se programa para el próximo evento real (un `sleep` que vence, el turno de otra tarea lista) y se apaga cuando no hay ninguno. la tarea inactiva ejecuta `wfi` y no gasta turnos. en reposo, cero despertares.
+- **nada de sondeo.** el disco y la consola avisan por interrupción; las tareas que esperan se bloquean y el procesador duerme mientras tanto.
+- **menos trabajo por tarea.** peticiones de disco de varios sectores (un programa se lee de una sola vez), cambio de espacio de direcciones sin vaciar la TLB (ASID), cachés encendidas desde el arranque.
+- **medido, no supuesto.** `uptime` informa cuántas interrupciones de timer ha habido y los tests fallan si el kernel despierta al procesador en reposo o si lanzar programas se vuelve lento. ver "energía y rendimiento".
+- **rendimiento.** arranque en milisegundos, programas que se lanzan sin que se note, asignadores propios y copias evitadas. el objetivo declarado es superar a macOS en eficiencia por vatio; hoy solo se mide en emulación, así que todavía no hay comparación honesta (ver más abajo).
+- **minimalismo.** kernel pequeño, pocas llamadas al sistema, cero dependencias externas dentro del kernel. menos código es menos que ejecutar y menos que despertar.
+- **interfaz estilo macOS.** compositor propio con barra de menú, dock, ventanas con sombra y esquinas redondeadas, tipografía propia y animaciones fluidas, sin pagar energía por ello: solo se redibuja lo que cambia y la pantalla estática no despierta a nadie.
+
+## energía y rendimiento
+
+medido en QEMU (`make test` lo comprueba en cada cambio):
+
+| métrica | resultado |
+|---------|-----------|
+| interrupciones de timer en 6 s de reposo | 0 |
+| lanzar 5 programas seguidos (leer ELF, cargar, ejecutar, esperar) | menos de 100 ms en total, 0 interrupciones de timer |
+| espera de entrada de consola y de disco | por interrupción, sin sondeo |
+
+lo que **no** está medido todavía, para no engañar: consumo real en vatios. QEMU emula el procesador, no su consumo, así que estas cifras miden despertares y latencia, que son las causas principales de gasto en reposo, pero no energía. la comparación con macOS solo será honesta con mediciones en hardware real (etapa 11), con el mismo procesador y la misma carga.
+
+pendiente para bajar más el consumo, en orden de impacto:
+
+1. apagar los núcleos secundarios y despertarlos solo bajo demanda (PSCI `CPU_OFF` / `CPU_ON`), y estados de reposo profundo (`CPU_SUSPEND`)
+2. escalado de frecuencia y voltaje en hardware real, con política de "correr rápido y dormir" (race to idle)
+3. agrupar temporizadores cercanos para despertar una vez en lugar de varias
+4. caché de bloques del disco para no volver a leer lo mismo
+5. pantalla: redibujar solo las regiones que cambian y apagar la GPU cuando nada se mueve
+6. herramienta de contabilidad de despertares por proceso
 
 ## qué significa "desde cero"
 
@@ -43,7 +68,8 @@ versión 0.0.1. corre en aarch64 sobre la máquina `virt` de QEMU.
 | 4 | tareas del kernel, planificador round-robin con apropiación, sleep, exit | listo |
 | 5 | modo usuario (EL0), llamadas al sistema, aislamiento de memoria kernel/usuario | listo |
 | 6 | memoria fina: W^X con páginas de 4 KiB, RAM leída del DTB, espacios de direcciones por proceso y cargador de imagen | listo |
-| 7 | virtio-blk, sistema de archivos propio (albafs) y ejecutables ELF desde el disco | en curso: disco, albafs de lectura y `exec` de ELF listos |
+| 7 | virtio-blk, sistema de archivos propio (albafs), ejecutables ELF, consola y shell | en curso: disco por interrupciones, albafs de lectura, `exec`/`wait` con argumentos, consola y shell listos |
+| 8 | energía: kernel sin tics, idle con `wfi`, sin sondeo | en curso: sin tics y sin sondeo listos; faltan los puntos de la lista de pendientes |
 
 salida actual al arrancar:
 

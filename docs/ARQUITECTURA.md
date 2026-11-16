@@ -36,6 +36,17 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 - `pmm::reserve` marca las páginas del DTB como ocupadas para que no se entreguen a un proceso.
 - si no hay DTB válido se asumen 128 MiB.
 
+## energia
+
+la eficiencia energetica es la prioridad maxima y se traduce en reglas concretas del kernel:
+
+- **sin tics.** el tiempo se lee del contador del sistema (`CNTPCT`), que cuenta sin gastar interrupciones. el comparador (`CNTP_CVAL`) solo se programa para el proximo evento: el vencimiento del primer `sleep` o el final del tick actual si hay otra tarea lista. sin eventos, el temporizador se apaga. `sched::reprogram` recalcula esto en cada cambio de estado.
+- **idle de verdad.** la tarea 0 es la idle: no entra en la cola de turnos y solo se elige cuando no queda nada mas. ejecuta `wfi`. antes participaba del round-robin y gastaba un turno de 100 ms durmiendo mientras otro programa esperaba.
+- **sin sondeo.** consola y disco usan interrupciones; `Wait::Input` y `Wait::Disk` bloquean la tarea y despiertan desde el manejador. solo el arranque, antes de habilitar interrupciones, espera por sondeo.
+- **menos peticiones.** `blk` agrupa hasta 64 KiB por peticion y `fs::read` lee un archivo entero de una vez.
+- **medicion.** `timer::irq_count` (syscall 11, mostrado por `uptime`) cuenta las interrupciones de timer; `tests/boot.sh` falla si el reposo despierta al procesador o si lanzar programas se degrada.
+- **limites conocidos:** solo hay un core activo (los demas hacen `wfe` en lugar de apagarse con PSCI); no hay escalado de frecuencia (no existe en QEMU); las cifras son de emulacion, no de consumo real.
+
 ## excepciones e interrupciones
 
 - tabla de 16 vectores alineada a 2 KiB. solo se usan sync (`0x200`) e irq (`0x280`) de EL1 con `SP_EL1`; el resto cae en `handle_bad`.
@@ -71,7 +82,7 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 ## disco y sistema de archivos
 
 - **virtio-mmio** ([src/virtio.rs](../src/virtio.rs)): QEMU `virt` expone 32 ranuras de 0x200 bytes desde `0x0a00_0000` (en el bloque de dispositivos, sin caché). se exige la versión moderna (`-global virtio-mmio.force-legacy=false`).
-- **virtio-blk** ([src/blk.rs](../src/blk.rs)): inicialización según la especificación (reinicio, `ACKNOWLEDGE`, `DRIVER`, característica `VERSION_1`, `FEATURES_OK`, cola 0, `DRIVER_OK`). una cola de 8 entradas y una petición a la vez, con una cadena de 3 descriptores (cabecera, 512 bytes de datos, estado). cada petición corre con las interrupciones enmascaradas y espera por sondeo con un límite. la memoria de la cola sale de `pmm` (identidad). pendiente: interrupciones en lugar de sondeo y mantenimiento de caché para hardware real.
+- **virtio-blk** ([src/blk.rs](../src/blk.rs)): inicialización según la especificación (reinicio, `ACKNOWLEDGE`, `DRIVER`, característica `VERSION_1`, `FEATURES_OK`, cola 0, `DRIVER_OK`). una cola de 8 entradas y una petición a la vez, con una cadena de 3 descriptores (cabecera, 512 bytes de datos, estado). cada petición corre con las interrupciones enmascaradas y espera por sondeo con un límite. la memoria de la cola sale de `pmm` (identidad). pendiente: mantenimiento de caché para hardware real.
 - **albafs** ([src/fs.rs](../src/fs.rs), [albafs.md](albafs.md)): montaje con validación del superbloque y del directorio (tamaños, límites, que ningún archivo se salga del disco), lectura de archivos sector a sector. solo lectura por ahora.
 
 ## modo usuario y llamadas al sistema
@@ -96,4 +107,4 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 
 ## pruebas
 
-`tests/boot.sh` genera un disco albafs y hace tres pruebas en QEMU: (1) arranque normal con las líneas esperadas (incluida la detección del disco virtio, una escritura y lectura de sector y el listado y lectura de albafs), tareas, modo usuario, intruso detenido, escritura en código de solo lectura detenida, dos procesos que escriben en la misma dirección virtual sin pisarse y ninguna excepción; (2) con la feature `wx-test`, escribir en el texto del kernel debe dar un fallo de datos (clase `0x25`); (3) con `-m 256M` el kernel debe leer 256 MiB del DTB. corre en cada push en GitHub Actions.
+`tests/boot.sh` genera un disco albafs y hace seis pruebas en QEMU: (1) arranque normal con las líneas esperadas (incluida la detección del disco virtio, una escritura y lectura de sector y el listado y lectura de albafs), tareas, modo usuario, intruso detenido, escritura en código de solo lectura detenida, dos procesos que escriben en la misma dirección virtual sin pisarse y ninguna excepción; (2) con la feature `wx-test`, escribir en el texto del kernel debe dar un fallo de datos (clase `0x25`); (3) con `-m 256M` el kernel debe leer 256 MiB del DTB; (4) una sesion de shell tecleada por el UART (ls, cat, echo, programas con argumentos, leer con retroceso, errores, exit); (5) energia: 6 s de reposo no deben costar interrupciones de timer; (6) rendimiento: lanzar programas seguidos casi no consume tiempo ni despierta al timer. corre en cada push en GitHub Actions.
