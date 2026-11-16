@@ -9,7 +9,7 @@
 //
 // toda mutacion del planificador ocurre con irq enmascaradas (un solo core).
 
-use crate::vm::{self, AddrSpace};
+use crate::vm::AddrSpace;
 use crate::fs;
 use crate::{irq, mmu, pmm, timer};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
@@ -51,7 +51,7 @@ task_trampoline:
     bl task_main
     b .
 
-// entrada a modo usuario: x19 = pc de usuario, x20 = pila de usuario.
+// entrada a modo usuario: x19 = pc de usuario, x20 = pila de usuario, x21 = argc, x22 = argv.
 // se limpian los registros para no filtrar valores del kernel a EL0.
 .global task_user_trampoline
 task_user_trampoline:
@@ -59,8 +59,8 @@ task_user_trampoline:
     msr sp_el0, x20
     msr elr_el1, x19
     msr spsr_el1, xzr
-    mov x0, xzr
-    mov x1, xzr
+    mov x0, x21
+    mov x1, x22
     mov x2, xzr
     mov x3, xzr
     mov x4, xzr
@@ -80,6 +80,8 @@ task_user_trampoline:
     mov x18, xzr
     mov x19, xzr
     mov x20, xzr
+    mov x21, xzr
+    mov x22, xzr
     mov x29, xzr
     mov x30, xzr
     eret
@@ -100,11 +102,20 @@ struct Task {
     ttbr: u64,     // espacio de direcciones (TTBR0 con ASID)
     id: usize,
     wake: u64,
+    wait: Option<Wait>, // por que esta bloqueada
+    ret: u64,           // resultado que recibe al despertar de una espera
+}
+
+/// motivo de un bloqueo
+#[derive(PartialEq)]
+enum Wait {
+    Child(usize), // espera a que termine el proceso con ese id
 }
 
 enum Mode {
     Ready,
     Sleep,
+    Block,
     Dead,
 }
 
@@ -112,7 +123,9 @@ struct Sched {
     current: Option<Box<Task>>,
     ready: VecDeque<Box<Task>>,
     sleeping: Vec<Box<Task>>,
+    blocked: Vec<Box<Task>>,
     zombies: Vec<Box<Task>>,
+    exited: Vec<(usize, u64)>, // codigos de salida que nadie ha recogido todavia
     next_id: usize,
 }
 
@@ -125,54 +138,70 @@ fn sched() -> &'static mut Sched {
 
 /// convierte el hilo de arranque en la tarea 0
 pub fn init() {
-    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, wake: 0 });
+    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, wake: 0, wait: None, ret: 0 });
     unsafe {
         *addr_of_mut!(S) = Some(Sched {
             current: Some(t),
             ready: VecDeque::new(),
             sleeping: Vec::new(),
+            blocked: Vec::new(),
             zombies: Vec::new(),
+            exited: Vec::new(),
             next_id: 1,
         });
     }
 }
 
 // crea una tarea con su pila de kernel y un marco inicial para switch_to:
-// x19 y x20 llevan datos al trampolin, x30 es la direccion donde "retorna" switch_to.
-fn new_task(x19: usize, x20: usize, trampoline: usize, space: Option<AddrSpace>) -> usize {
+// x19-x22 llevan datos al trampolin, x30 es la direccion donde "retorna" switch_to.
+fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>) -> usize {
     let g = irq::save();
     let s = sched();
     let stack = pmm::alloc_pages(STACK_PAGES).expect("sin memoria para pila");
     let sp = stack + STACK_PAGES * pmm::PAGE - FRAME;
     unsafe {
         core::ptr::write_bytes(sp as *mut u8, 0, FRAME);
-        *(sp as *mut usize) = x19;
-        *((sp + 8) as *mut usize) = x20;
+        for (i, r) in regs.iter().enumerate() {
+            *((sp + 8 * i) as *mut usize) = *r;
+        }
         *((sp + 88) as *mut usize) = trampoline;
     }
     let id = s.next_id;
     s.next_id += 1;
     let ttbr = space.as_ref().map_or(mmu::kernel_ttbr(), |sp| sp.ttbr());
-    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, wake: 0 }));
+    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, wake: 0, wait: None, ret: 0 }));
     irq::restore(g);
     id
 }
 
 /// tarea de kernel
 pub fn spawn(f: fn()) -> usize {
-    new_task(f as usize, 0, task_trampoline as *const () as usize, None)
+    new_task([f as usize, 0, 0, 0], task_trampoline as *const () as usize, None)
 }
 
-/// ejecuta un programa del disco: lo lee de albafs, lo carga en un espacio de direcciones
-/// propio y crea el proceso, que arranca en EL0 en el punto de entrada del ELF
-pub fn exec(name: &str) -> Result<usize, &'static str> {
+/// ejecuta un programa del disco con argumentos (args[0] suele ser el nombre): lo lee de
+/// albafs, lo carga en un espacio de direcciones propio, deja argc/argv en su pila y crea el
+/// proceso, que arranca en EL0 en el punto de entrada del ELF
+pub fn exec_args(name: &str, args: &[&[u8]]) -> Result<usize, &'static str> {
     let file = fs::find(name).ok_or("no existe")?;
     if file.flags & fs::FLAG_EXEC == 0 {
         return Err("no es ejecutable");
     }
     let data = fs::read(name).ok_or("error de lectura")?;
-    let (space, entry) = AddrSpace::from_elf(&data)?;
-    Ok(new_task(entry, vm::STACK_TOP, task_user_trampoline as *const () as usize, Some(space)))
+    let (mut space, entry) = AddrSpace::from_elf(&data)?;
+    let (sp, argc, argv) = match space.push_args(args) {
+        Ok(v) => v,
+        Err(e) => {
+            space.destroy();
+            return Err(e);
+        }
+    };
+    Ok(new_task([entry, sp, argc, argv], task_user_trampoline as *const () as usize, Some(space)))
+}
+
+/// ejecuta un programa del disco sin argumentos
+pub fn exec(name: &str) -> Result<usize, &'static str> {
+    exec_args(name, &[name.as_bytes()])
 }
 
 /// el rango de usuario cae dentro de una region mapeada del proceso actual
@@ -240,6 +269,7 @@ fn switch_away(mode: Mode) {
     match mode {
         Mode::Ready => s.ready.push_back(cur),
         Mode::Sleep => s.sleeping.push(cur),
+        Mode::Block => s.blocked.push(cur),
         Mode::Dead => s.zombies.push(cur),
     }
     unsafe { switch_to(old_sp, new_sp) };
@@ -264,10 +294,64 @@ pub fn sleep(ticks: u64) {
     irq::restore(g);
 }
 
-pub fn exit() -> ! {
+const ERR: u64 = u64::MAX;
+const MAX_EXITED: usize = 32;
+
+/// termina la tarea actual con un codigo de salida. despierta a quien la esperaba; si nadie la
+/// espera, el codigo queda guardado (hasta 32) para un `wait_child` posterior.
+pub fn exit_with(code: u64) -> ! {
     irq::save();
+    let s = sched();
+    let id = s.current.as_ref().unwrap().id;
+    let mut waited = false;
+    let mut i = 0;
+    while i < s.blocked.len() {
+        if s.blocked[i].wait == Some(Wait::Child(id)) {
+            let mut t = s.blocked.swap_remove(i);
+            t.wait = None;
+            t.ret = code;
+            s.ready.push_back(t);
+            waited = true;
+        } else {
+            i += 1;
+        }
+    }
+    if !waited {
+        if s.exited.len() == MAX_EXITED {
+            s.exited.remove(0);
+        }
+        s.exited.push((id, code));
+    }
     switch_away(Mode::Dead);
     unreachable!()
+}
+
+pub fn exit() -> ! {
+    exit_with(0)
+}
+
+fn is_alive(s: &Sched, id: usize) -> bool {
+    s.current.as_ref().is_some_and(|t| t.id == id)
+        || s.ready.iter().any(|t| t.id == id)
+        || s.sleeping.iter().any(|t| t.id == id)
+        || s.blocked.iter().any(|t| t.id == id)
+}
+
+/// espera a que termine el proceso `pid` y devuelve su codigo de salida (u64::MAX si no existe)
+pub fn wait_child(pid: usize) -> u64 {
+    let g = irq::save();
+    let s = sched();
+    let ret = if let Some(i) = s.exited.iter().position(|e| e.0 == pid) {
+        s.exited.remove(i).1
+    } else if pid == s.current.as_ref().unwrap().id || !is_alive(s, pid) {
+        ERR
+    } else {
+        s.current.as_mut().unwrap().wait = Some(Wait::Child(pid));
+        switch_away(Mode::Block);
+        sched().current.as_ref().unwrap().ret
+    };
+    irq::restore(g);
+    ret
 }
 
 /// llamado por el timer en cada tick

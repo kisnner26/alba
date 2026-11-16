@@ -45,6 +45,7 @@ pub struct AddrSpace {
     regions: Vec<(usize, usize)>, // (direccion virtual, bytes) mapeados: para validar punteros
     asid: u16,
     ttbr: u64,
+    stack_pa: usize, // pagina fisica mas baja de la pila de usuario
 }
 
 fn desc(pa: usize, flags: u64) -> u64 {
@@ -60,7 +61,7 @@ impl AddrSpace {
     pub fn from_elf(data: &[u8]) -> Result<(AddrSpace, usize), &'static str> {
         let elf = elf::parse(data)?;
         let asid = alloc_asid().ok_or("no quedan ASIDs")?;
-        let mut sp = AddrSpace { pages: Vec::new(), regions: Vec::new(), asid, ttbr: 0 };
+        let mut sp = AddrSpace { pages: Vec::new(), regions: Vec::new(), asid, ttbr: 0, stack_pa: 0 };
         match sp.build(data, &elf) {
             Ok(()) => Ok((sp, elf.entry)),
             Err(e) => {
@@ -131,6 +132,7 @@ impl AddrSpace {
 
         // pila: lectura y escritura, sin ejecucion
         let stack = self.alloc(Zone::User, STACK_PAGES)?;
+        self.stack_pa = stack;
         let first = (STACK_BOTTOM - CODE_VA) / PAGE;
         for i in 0..STACK_PAGES {
             put(l3, first + i, desc(stack + i * PAGE, AP_EL0 | PXN | UXN));
@@ -140,6 +142,38 @@ impl AddrSpace {
         unsafe { asm!("dsb ishst") }; // las tablas deben ser visibles para el recorrido de tablas
         self.ttbr = l1 as u64 | (self.asid as u64) << 48;
         Ok(())
+    }
+
+    /// deja argc y argv en la pila de usuario (cadenas, luego el vector de punteros terminado en
+    /// nulo). devuelve (sp inicial, argc, direccion de argv). la pila se escribe por la
+    /// identidad del kernel: el proceso todavia no ha corrido.
+    pub fn push_args(&mut self, args: &[&[u8]]) -> Result<(usize, usize, usize), &'static str> {
+        const MAX_ARGS: usize = 16;
+        const MAX_BYTES: usize = 2048;
+        let total: usize = args.iter().map(|a| a.len() + 1).sum::<usize>() + 8 * (args.len() + 1) + 32;
+        if args.len() > MAX_ARGS || total > MAX_BYTES {
+            return Err("demasiados argumentos");
+        }
+        let pa = |va: usize| self.stack_pa + (va - STACK_BOTTOM);
+        let mut cursor = STACK_TOP;
+        let mut ptrs: Vec<usize> = Vec::new();
+        for a in args {
+            cursor -= a.len() + 1;
+            unsafe {
+                core::ptr::copy_nonoverlapping(a.as_ptr(), pa(cursor) as *mut u8, a.len());
+                (pa(cursor + a.len()) as *mut u8).write(0);
+            }
+            ptrs.push(cursor);
+        }
+        cursor &= !15;
+        cursor -= 8 * (ptrs.len() + 1);
+        cursor &= !15;
+        let argv = cursor;
+        for (i, p) in ptrs.iter().enumerate() {
+            unsafe { (pa(argv + 8 * i) as *mut usize).write(*p) };
+        }
+        unsafe { (pa(argv + 8 * ptrs.len()) as *mut usize).write(0) };
+        Ok((argv, ptrs.len(), argv))
     }
 
     /// valor para TTBR0 (tabla base + ASID)
