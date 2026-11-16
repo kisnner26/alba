@@ -70,6 +70,7 @@ macro_rules! println {
     }};
 }
 
+mod fdt;
 mod gic;
 mod heap;
 mod irq;
@@ -133,7 +134,13 @@ static HEAP: heap::KernelHeap = heap::KernelHeap;
 pub extern "C" fn kmain(dtb: usize) -> ! {
     println!("alba 0.0.1");
     println!("hola desde mi propio sistema operativo");
-    println!("dtb: {:#x}", dtb);
+    if fdt::is_valid(dtb) {
+        println!("dtb: {:#x} ({} bytes)", dtb, fdt::total_size(dtb));
+    }
+    match fdt::ram(dtb) {
+        Some(r) => println!("ram segun dtb: base={:#x} tamano={} MiB", r.base, r.size >> 20),
+        None => println!("sin dtb valido"),
+    }
     mmu::init();
 
     pmm::init();
