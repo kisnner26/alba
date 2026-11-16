@@ -13,9 +13,9 @@ build:
 	cargo build --release
 	python3 tools/mkimage.py $(ELF) $(BIN)
 
-# disco albafs con los archivos de disk/
+# disco albafs con los archivos de disk/ y los programas de usuario
 disk:
-	python3 tools/mkfs.py disk $(DISK)
+	./tools/mkdisk.sh $(DISK)
 
 run: build disk
 	$(QEMU) -kernel $(BIN)

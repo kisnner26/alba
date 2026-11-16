@@ -20,7 +20,7 @@ build() {
 # run_qemu <segundos> [memoria, 128M por defecto] -> deja la salida en $OUT
 run_qemu() {
   OUT=$(mktemp)
-  python3 tools/mkfs.py disk "$DISK"
+  ./tools/mkdisk.sh "$DISK" >/dev/null
   qemu-system-aarch64 -machine virt -cpu cortex-a72 -m "${2:-128M}" -nographic \
     -global virtio-mmio.force-legacy=false \
     -drive file="$DISK",if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0 \
@@ -45,7 +45,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS01\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 2 archivos"
+  "albafs: 5 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
