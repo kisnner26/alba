@@ -72,6 +72,7 @@ macro_rules! println {
 
 mod blk;
 mod fdt;
+mod fs;
 mod gic;
 mod heap;
 mod irq;
@@ -191,6 +192,20 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
         let mut back = [0u8; blk::SECTOR];
         let ok = blk::write(last, &pattern) && blk::read(last, &mut back) && back == pattern;
         println!("disco: escritura y lectura del sector {} {}", last, if ok { "ok" } else { "FALLO" });
+
+        match fs::mount() {
+            Ok(()) => {
+                println!("albafs: {} archivos", fs::files().len());
+                for e in fs::files() {
+                    let x = if e.flags & fs::FLAG_EXEC != 0 { " ejecutable" } else { "" };
+                    println!("  {} ({} bytes{})", e.name, e.size, x);
+                }
+                if let Some(d) = fs::read("hola.txt") {
+                    println!("hola.txt: {}", core::str::from_utf8(&d).unwrap_or("?").trim_end());
+                }
+            }
+            Err(e) => println!("albafs: FALLO al montar: {}", e),
+        }
     } else {
         println!("disco: no hay dispositivo de bloque");
     }
