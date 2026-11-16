@@ -27,8 +27,8 @@ SECTIONS
     /* codigo y datos de los programas de usuario: bloque propio accesible desde EL0 */
     . = 0x41000000;
     .user : {
-        KEEP(*(.text.user*))
-        KEEP(*(.rodata.user*))
+        KEEP(*(.user.text*))
+        KEEP(*(.user.rodata*))
     }
     . = ALIGN(4096);
     __user_end = .;

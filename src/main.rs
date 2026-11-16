@@ -65,6 +65,7 @@ mod sched;
 mod syscall;
 mod timer;
 mod trap;
+mod user;
 
 fn demo_a() {
     for i in 1..=4 {
@@ -157,6 +158,9 @@ pub extern "C" fn kmain() -> ! {
     sched::spawn(demo_b);
     sched::spawn(demo_busy_1);
     sched::spawn(demo_busy_2);
+    sched::spawn_user(user::demo as *const () as usize);
+    sched::spawn_user(user::demo as *const () as usize);
+    sched::spawn_user(user::intruso as *const () as usize);
 
     unsafe { core::arch::asm!("msr daifclr, #2") }; // desenmascara irq
 

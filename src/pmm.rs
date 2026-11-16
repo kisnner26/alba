@@ -10,7 +10,6 @@ pub const PAGE: usize = 4096;
 const NPAGES: usize = (RAM_END - RAM_BASE) / PAGE;
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 pub enum Zone {
     Kernel = 0,
     User = 1,
