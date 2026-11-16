@@ -81,6 +81,7 @@ mod syscall;
 mod timer;
 mod trap;
 mod user;
+mod virtio;
 mod vm;
 
 fn demo_a() {
@@ -175,6 +176,8 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
         drop(v);
         println!("heap: tras liberar, usado={} KiB", before - pmm::free_kib());
     }
+
+    virtio::scan();
 
     trap::init();
 

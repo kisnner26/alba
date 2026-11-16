@@ -9,6 +9,7 @@ cd "$(dirname "$0")/.."
 
 ELF=target/aarch64-unknown-none-softfloat/release/alba
 KERNEL=$ELF.bin
+DISK=target/alba-disk.img
 
 # compila y genera la imagen plana con cabecera arm64 (QEMU entrega el DTB en x0)
 build() {
@@ -19,7 +20,10 @@ build() {
 # run_qemu <segundos> [memoria, 128M por defecto] -> deja la salida en $OUT
 run_qemu() {
   OUT=$(mktemp)
+  python3 tools/mkfs.py disk "$DISK"
   qemu-system-aarch64 -machine virt -cpu cortex-a72 -m "${2:-128M}" -nographic \
+    -global virtio-mmio.force-legacy=false \
+    -drive file="$DISK",if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0 \
     -kernel "$KERNEL" >"$OUT" 2>&1 &
   local pid=$!
   sleep "$1"
@@ -36,6 +40,8 @@ run_qemu "${BOOT_SECS:-12}"
 expected=(
   "alba 0.0.1"
   "memoria:"
+  "virtio: ranura"
+  "(bloque) version 2"
   "heap: suma=49995000"
   "[a] fin"
   "[b] fin"
