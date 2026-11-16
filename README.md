@@ -42,7 +42,7 @@ versión 0.0.1. corre en aarch64 sobre la máquina `virt` de QEMU.
 | 3 | MMU con cachés, gestor de páginas físicas, heap del kernel | listo |
 | 4 | tareas del kernel, planificador round-robin con apropiación, sleep, exit | listo |
 | 5 | modo usuario (EL0), llamadas al sistema, aislamiento de memoria kernel/usuario | listo |
-| 6 | memoria fina: W^X en el kernel con páginas de 4 KiB, RAM leída del DTB | en curso (W^X y lectura del DTB listos; faltan espacios por proceso y cargador) |
+| 6 | memoria fina: W^X con páginas de 4 KiB, RAM leída del DTB, espacios de direcciones por proceso y cargador de imagen | listo |
 
 salida actual al arrancar:
 
@@ -65,12 +65,14 @@ salida actual al arrancar:
 
 **memoria** ([src/mmu.rs](src/mmu.rs), [src/pmm.rs](src/pmm.rs), [src/heap.rs](src/heap.rs)):
 
-- MMU encendida con mapeo identidad (bloques de 1 GiB y 2 MiB, y páginas de 4 KiB en el primer bloque): dispositivos sin caché ni acceso desde EL0; 16 MiB de RAM solo para el kernel; el resto de la RAM accesible desde EL0 y nunca ejecutable por el kernel
+- MMU encendida con mapeo identidad (bloques de 1 GiB y 2 MiB, y páginas de 4 KiB en el primer bloque): dispositivos sin caché ni acceso desde EL0; 16 MiB de RAM solo para el kernel; el resto es memoria de procesos, que EL0 solo ve a través de su propio espacio de direcciones
 - W^X en el kernel: texto de solo lectura y ejecutable, rodata de solo lectura, datos/pilas/heap escribibles sin ejecución; el arranque de prueba comprueba que escribir en el texto da un fallo
 - páginas físicas de 4 KiB con bitmap, con reserva de rangos contiguos
 - heap por clases de tamaño de 16 a 2048 bytes con listas libres; páginas contiguas para tamaños mayores
 
 **arranque estándar** ([src/fdt.rs](src/fdt.rs), [tools/mkimage.py](tools/mkimage.py)): alba empieza con la cabecera de imagen arm64 (el protocolo de arranque de linux). QEMU y los firmwares reales la reconocen y entregan el device tree en `x0`; el kernel lo recorre con un lector propio para saber cuánta RAM hay y reserva el propio DTB. la imagen plana la genera un script propio a partir del ELF, sin `objcopy`.
+
+**espacios de direcciones** ([src/vm.rs](src/vm.rs)): cada proceso tiene tablas propias (niveles 1, 2 y 3), un ASID de 8 bits y ve su imagen en `0x8000_0000` (solo lectura y ejecución), una página de datos en `0x8010_0000` y la pila bajo `0x8020_0000`. todo lo demás está sin mapear: ni siquiera existe la memoria de otros procesos ni la del kernel para EL0. el cargador copia la imagen de usuario embebida en el kernel a páginas nuevas y puestas a cero. el planificador cambia `TTBR0` solo cuando cambia el espacio. el test prueba que dos procesos que escriben en la misma dirección virtual no se pisan.
 
 **modo usuario y llamadas al sistema** ([src/syscall.rs](src/syscall.rs), [src/user.rs](src/user.rs)):
 
@@ -90,7 +92,7 @@ salida actual al arrancar:
 
 limitaciones conocidas, a resolver en las próximas etapas:
 
-- los programas de usuario viven en la imagen del kernel (sección `.user`) y comparten un único espacio de direcciones; faltan espacios de direcciones por proceso y un cargador de programas
+- los programas de usuario siguen embebidos en la imagen del kernel; falta un cargador de ejecutables desde un sistema de archivos
 - la RAM máxima soportada es 1 GiB (una tabla de nivel 2)
 - el heap no es seguro de usar desde manejadores de interrupción
 - solo un core activo
@@ -102,7 +104,7 @@ limitaciones conocidas, a resolver en las próximas etapas:
 3. memoria física, MMU y heap (listo)
 4. tareas, planificador y cambio de contexto (listo)
 5. modo usuario (EL0) y llamadas al sistema (listo)
-6. memoria fina: W^X con tablas de 4 KiB (listo), espacio de direcciones por proceso, cargador de programas (lectura del DTB: listo)
+6. memoria fina: W^X, lectura del DTB, espacio de direcciones por proceso y cargador (listo)
 7. drivers virtio: disco, red, teclado y ratón; sistema de archivos propio
 8. shell, biblioteca estándar propia y programas de usuario
 9. GPU virtio, framebuffer, compositor y escritorio estilo macOS
@@ -148,6 +150,7 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
         ├── irq.rs         secciones críticas
         ├── sched.rs       tareas y planificador
         ├── syscall.rs     llamadas al sistema
+        ├── vm.rs          espacios de direcciones y cargador
         ├── user.rs        programas de usuario de demostración
         ├── mmu.rs         memoria virtual
         ├── pmm.rs         memoria física
