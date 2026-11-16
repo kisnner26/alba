@@ -4,7 +4,8 @@ const GICD: usize = 0x0800_0000;
 const GICC: usize = 0x0801_0000;
 
 const GICD_CTLR: usize = GICD;
-const GICD_ISENABLER0: usize = GICD + 0x100;
+const GICD_ISENABLER: usize = GICD + 0x100; // un bit por interrupcion, 32 por registro
+const GICD_ITARGETSR: usize = GICD + 0x800; // un byte por interrupcion: cores destino
 const GICC_CTLR: usize = GICC;
 const GICC_PMR: usize = GICC + 0x004;
 const GICC_IAR: usize = GICC + 0x00c;
@@ -24,9 +25,12 @@ pub fn init() {
     write(GICC_CTLR, 1);
 }
 
+/// habilita una interrupcion. las SPI (32 en adelante) ademas necesitan un core destino.
 pub fn enable(irq: u32) {
-    // solo SGI/PPI (0..31) por ahora
-    write(GICD_ISENABLER0, 1 << irq);
+    if irq >= 32 {
+        unsafe { ((GICD_ITARGETSR + irq as usize) as *mut u8).write_volatile(0x01) }; // core 0
+    }
+    write(GICD_ISENABLER + 4 * (irq as usize / 32), 1 << (irq % 32));
 }
 
 pub fn dispatch() {
@@ -34,6 +38,7 @@ pub fn dispatch() {
     let id = iar & 0x3ff;
     match id {
         crate::timer::IRQ => crate::timer::tick(),
+        crate::console::IRQ => crate::console::irq(),
         1020..=1023 => return, // espuria
         _ => crate::println!("irq sin manejador: {}", id),
     }

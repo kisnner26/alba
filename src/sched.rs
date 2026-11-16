@@ -110,6 +110,7 @@ struct Task {
 #[derive(PartialEq)]
 enum Wait {
     Child(usize), // espera a que termine el proceso con ese id
+    Input,        // espera entrada de la consola
 }
 
 enum Mode {
@@ -352,6 +353,29 @@ pub fn wait_child(pid: usize) -> u64 {
     };
     irq::restore(g);
     ret
+}
+
+/// bloquea la tarea actual hasta que `wake_input` la despierte.
+pub fn wait_input() {
+    let g = irq::save();
+    sched().current.as_mut().unwrap().wait = Some(Wait::Input);
+    switch_away(Mode::Block);
+    irq::restore(g);
+}
+
+/// despierta a las tareas que esperan entrada de la consola (se llama desde la irq)
+pub fn wake_input() {
+    let s = sched();
+    let mut i = 0;
+    while i < s.blocked.len() {
+        if s.blocked[i].wait == Some(Wait::Input) {
+            let mut t = s.blocked.swap_remove(i);
+            t.wait = None;
+            s.ready.push_back(t);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// llamado por el timer en cada tick

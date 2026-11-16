@@ -71,6 +71,7 @@ macro_rules! println {
 }
 
 mod blk;
+mod console;
 mod elf;
 mod fdt;
 mod fs;
@@ -219,6 +220,7 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
 
     gic::init();
     timer::init();
+    console::init();
 
     sched::init();
     sched::spawn(demo_a);
@@ -226,7 +228,7 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
     sched::spawn(demo_busy_1);
     sched::spawn(demo_busy_2);
     // programas de usuario cargados desde el disco (dos copias de hola: cada una en su espacio)
-    for prog in ["hola", "hola", "intruso", "intruso2", "lanzador", "basura", "hola.txt", "noexiste"] {
+    for prog in ["hola", "hola", "intruso", "intruso2", "lanzador", "leer", "basura", "hola.txt", "noexiste"] {
         match sched::exec(prog) {
             Ok(pid) => println!("exec {}: pid {}", prog, pid),
             Err(e) => println!("exec {}: rechazado ({})", prog, e),

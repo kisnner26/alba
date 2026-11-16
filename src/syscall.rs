@@ -7,10 +7,11 @@
 //   3  getpid()              id de la tarea
 //   4  yield()               cede la cpu
 //   5  wait(pid)             espera a un proceso y devuelve su codigo de salida
+//   7  read(fd, ptr, len)    lee una linea de la consola (fd 0); bloquea hasta tenerla
 //   6  exec(ruta, nruta, args, nargs)  lanza un programa del disco; args son cadenas
 //                                      terminadas en cero; devuelve el pid
 
-use crate::{irq, sched};
+use crate::{console, irq, sched};
 use core::fmt::Write;
 
 const ERR: u64 = u64::MAX;
@@ -30,8 +31,17 @@ pub fn dispatch(nr: u64, a: [u64; 4]) -> u64 {
         }
         5 => sched::wait_child(a[0] as usize),
         6 => exec(a[0], a[1], a[2], a[3]),
+        7 => read(a[0], a[1], a[2]),
         _ => ERR,
     }
+}
+
+fn read(fd: u64, ptr: u64, len: u64) -> u64 {
+    if fd != 0 || len > 4096 || !sched::user_range_ok(ptr, len) {
+        return ERR;
+    }
+    let buf = unsafe { core::slice::from_raw_parts_mut(ptr as *mut u8, len as usize) };
+    console::read(buf) as u64
 }
 
 fn write(fd: u64, ptr: u64, len: u64) -> u64 {
