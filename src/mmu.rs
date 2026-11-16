@@ -20,6 +20,8 @@ static mut L2: Table = Table([0; 512]);
 // primer bloque de 2 MiB de la RAM, dividido en paginas de 4 KiB para dar permisos
 // distintos al texto, a los datos de solo lectura y a los datos del kernel
 static mut L3: Table = Table([0; 512]);
+// TTBR0 activo: solo se reescribe al cambiar a una tarea con otro espacio de direcciones
+static mut CUR_TTBR: u64 = 0;
 
 extern "C" {
     static __text_start: u8;
@@ -47,6 +49,21 @@ const BLOCK: usize = 2 << 20;
 
 fn addr(sym: &u8) -> usize {
     sym as *const u8 as usize
+}
+
+/// valor de TTBR0 de las tareas del kernel (tabla base, ASID 0)
+pub fn kernel_ttbr() -> u64 {
+    core::ptr::addr_of!(L1) as u64
+}
+
+/// activa un espacio de direcciones (TTBR0 con el ASID en los bits 63:48)
+pub fn switch_ttbr(ttbr: u64) {
+    unsafe {
+        if CUR_TTBR != ttbr {
+            CUR_TTBR = ttbr;
+            asm!("msr ttbr0_el1, {t}", "isb", t = in(reg) ttbr);
+        }
+    }
 }
 
 /// fin de la RAM (se fija en init a partir del tamano que informa el DTB)
@@ -104,7 +121,8 @@ pub fn init(ram_size: usize) {
         asm!("mrs {}, id_aa64mmfr0_el1", out(reg) mmfr0);
         // T0SZ=25 (39 bits), WB inner/outer, inner shareable, TTBR1 apagado
         let tcr: u64 = 25 | (1 << 8) | (1 << 10) | (3 << 12) | (1 << 23) | ((mmfr0 & 7) << 32);
-        let ttbr = core::ptr::addr_of!(L1) as u64;
+        let ttbr = kernel_ttbr();
+        CUR_TTBR = ttbr;
         let bits: u64 = (1 << 0) | (1 << 2) | (1 << 12); // M, C, I
 
         asm!(

@@ -9,7 +9,7 @@
 //
 // toda mutacion del planificador ocurre con irq enmascaradas (un solo core).
 
-use crate::{irq, pmm, timer};
+use crate::{irq, mmu, pmm, timer};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use core::arch::global_asm;
 use core::ptr::addr_of_mut;
@@ -97,6 +97,7 @@ struct Task {
     sp: usize,
     stack: usize,  // pila del kernel; 0 = pila de arranque, no se libera
     ustack: usize, // pila de usuario; 0 = tarea de kernel
+    ttbr: u64,     // espacio de direcciones (TTBR0 con ASID)
     id: usize,
     wake: u64,
 }
@@ -124,7 +125,7 @@ fn sched() -> &'static mut Sched {
 
 /// convierte el hilo de arranque en la tarea 0
 pub fn init() {
-    let t = Box::new(Task { sp: 0, stack: 0, ustack: 0, id: 0, wake: 0 });
+    let t = Box::new(Task { sp: 0, stack: 0, ustack: 0, ttbr: mmu::kernel_ttbr(), id: 0, wake: 0 });
     unsafe {
         *addr_of_mut!(S) = Some(Sched {
             current: Some(t),
@@ -151,7 +152,7 @@ fn new_task(x19: usize, x20: usize, trampoline: usize, ustack: usize) -> usize {
     }
     let id = s.next_id;
     s.next_id += 1;
-    s.ready.push_back(Box::new(Task { sp, stack, ustack, id, wake: 0 }));
+    s.ready.push_back(Box::new(Task { sp, stack, ustack, ttbr: mmu::kernel_ttbr(), id, wake: 0 }));
     irq::restore(g);
     id
 }
@@ -219,6 +220,7 @@ fn switch_away(mode: Mode) {
     let mut cur = s.current.take().unwrap();
     let old_sp: *mut usize = &mut cur.sp;
     let new_sp = next.sp;
+    mmu::switch_ttbr(next.ttbr);
     s.current = Some(next);
     match mode {
         Mode::Ready => s.ready.push_back(cur),
