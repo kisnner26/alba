@@ -1,7 +1,8 @@
 // MMU con mapeo identidad. nivel 1 (bloques de 1 GiB) + nivel 2 (bloques de 2 MiB) para la RAM.
 //
 //   0x0000_0000..0x4000_0000  dispositivos (UART, GIC, ...): sin cache, sin ejecucion, sin acceso EL0
-//   0x4000_0000..0x4100_0000  zona del kernel (16 MiB): imagen, heap, pilas. solo EL1
+//   0x4000_0000..0x4100_0000  zona del kernel (16 MiB). solo EL1, con W^X:
+//       texto RX, rodata R, datos/bss/pilas/heap RW sin ejecucion (paginas de 4 KiB en el primer bloque)
 //   0x4100_0000..0x4120_0000  codigo de usuario (seccion .user): EL0 lectura/escritura/ejecucion
 //   0x4120_0000..0x4800_0000  datos de usuario: EL0 lectura/escritura, sin ejecucion
 //
@@ -16,11 +17,24 @@ struct Table([u64; 512]);
 
 static mut L1: Table = Table([0; 512]);
 static mut L2: Table = Table([0; 512]);
+// primer bloque de 2 MiB de la RAM, dividido en paginas de 4 KiB para dar permisos
+// distintos al texto, a los datos de solo lectura y a los datos del kernel
+static mut L3: Table = Table([0; 512]);
+
+extern "C" {
+    static __text_start: u8;
+    static __text_end: u8;
+    static __rodata_start: u8;
+    static __rodata_end: u8;
+    static __stack_top: u8;
+}
 
 const VALID_BLOCK: u64 = 1;
 const TABLE: u64 = 3;
+const PAGE_DESC: u64 = 3;
 const AF: u64 = 1 << 10;
 const AP_EL0: u64 = 1 << 6;
+const AP_RO: u64 = 1 << 7;
 const PXN: u64 = 1 << 53;
 const UXN: u64 = 1 << 54;
 
@@ -28,6 +42,10 @@ pub const RAM_BASE: usize = 0x4000_0000;
 pub const KERNEL_ZONE_END: usize = 0x4100_0000;
 pub const RAM_END: usize = 0x4800_0000;
 const BLOCK: usize = 2 << 20;
+
+fn addr(sym: &u8) -> usize {
+    sym as *const u8 as usize
+}
 
 pub fn init() {
     unsafe {
@@ -40,11 +58,29 @@ pub fn init() {
 
         let kernel_blocks = (KERNEL_ZONE_END - RAM_BASE) / BLOCK;
         let all_blocks = (RAM_END - RAM_BASE) / BLOCK;
-        for i in 0..all_blocks {
+        // primer bloque: paginas de 4 KiB con W^X. nada es a la vez escribible y ejecutable.
+        let l3 = &mut *core::ptr::addr_of_mut!(L3);
+        let (text_s, text_e) = (addr(&__text_start), addr(&__text_end));
+        let (ro_s, ro_e) = (addr(&__rodata_start), addr(&__rodata_end));
+        assert!(addr(&__stack_top) <= RAM_BASE + BLOCK, "kernel no cabe en el primer bloque");
+        for i in 0..512 {
+            let pa = RAM_BASE + i * 4096;
+            let page = pa as u64 | PAGE_DESC | (1 << 2) | (3 << 8) | AF | UXN;
+            l3.0[i] = if pa >= text_s && pa < text_e {
+                page | AP_RO // texto: lectura y ejecucion
+            } else if pa >= ro_s && pa < ro_e {
+                page | AP_RO | PXN // rodata: solo lectura
+            } else {
+                page | PXN // datos, bss, pilas y memoria libre: lectura y escritura, sin ejecucion
+            };
+        }
+        l2.0[0] = core::ptr::addr_of!(L3) as u64 | TABLE;
+
+        for i in 1..all_blocks {
             let pa = (RAM_BASE + i * BLOCK) as u64;
             let base = pa | VALID_BLOCK | (1 << 2) | (3 << 8) | AF;
             l2.0[i] = if i < kernel_blocks {
-                base | UXN // kernel: solo EL1, EL0 no ejecuta
+                base | PXN | UXN // resto de la zona del kernel: datos, sin ejecucion
             } else if i == kernel_blocks {
                 base | AP_EL0 | PXN // codigo de usuario
             } else {
