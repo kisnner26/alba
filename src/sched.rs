@@ -124,6 +124,7 @@ enum Mode {
 struct Sched {
     current: Option<Box<Task>>,
     ready: VecDeque<Box<Task>>,
+    idle: Option<Box<Task>>, // la tarea 0 cuando no esta corriendo: solo se elige si no hay nada mas
     sleeping: Vec<Box<Task>>,
     blocked: Vec<Box<Task>>,
     zombies: Vec<Box<Task>>,
@@ -145,6 +146,7 @@ pub fn init() {
         *addr_of_mut!(S) = Some(Sched {
             current: Some(t),
             ready: VecDeque::new(),
+            idle: None,
             sleeping: Vec::new(),
             blocked: Vec::new(),
             zombies: Vec::new(),
@@ -279,13 +281,19 @@ fn wake_sleepers(s: &mut Sched) {
 fn switch_away(mode: Mode) {
     let s = sched();
     wake_sleepers(s);
-    let Some(next) = s.ready.pop_front() else {
-        match mode {
-            Mode::Ready => {
+    // siguiente tarea: la primera lista; la tarea idle (0) solo si no queda ninguna otra
+    let next = match s.ready.pop_front() {
+        Some(t) => t,
+        None => {
+            if let Mode::Ready = mode {
+                // nadie mas quiere la cpu: la tarea actual sigue (sea idle o no)
                 reprogram(s);
                 return;
             }
-            _ => panic!("no hay tareas listas"),
+            match s.idle.take() {
+                Some(t) => t,
+                None => panic!("no hay tareas listas"),
+            }
         }
     };
     let mut cur = s.current.take().unwrap();
@@ -295,6 +303,8 @@ fn switch_away(mode: Mode) {
     s.current = Some(next);
     match mode {
         Mode::Ready => s.ready.push_back(cur),
+        // la idle no entra en la rotacion: se aparta hasta que no haya nada mas que correr
+        Mode::Ready if cur.id == 0 => s.idle = Some(cur),
         Mode::Sleep => s.sleeping.push(cur),
         Mode::Block => s.blocked.push(cur),
         Mode::Dead => s.zombies.push(cur),
