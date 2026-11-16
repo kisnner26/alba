@@ -51,6 +51,11 @@ pub fn yield_now() {
     syscall(4, 0, 0, 0, 0);
 }
 
+/// lee una linea de la consola (con su '\n'); bloquea hasta que haya una. devuelve los bytes leidos.
+pub fn read_line(buf: &mut [u8]) -> usize {
+    syscall(7, 0, buf.as_mut_ptr() as u64, buf.len() as u64, 0) as usize
+}
+
 /// espera a que termine el proceso `pid` y devuelve su codigo de salida (u64::MAX si no existe)
 pub fn wait(pid: u64) -> u64 {
     syscall(5, pid, 0, 0, 0)

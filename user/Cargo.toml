@@ -22,6 +22,10 @@ name = "lanzador"
 path = "src/bin/lanzador.rs"
 
 [[bin]]
+name = "leer"
+path = "src/bin/leer.rs"
+
+[[bin]]
 name = "intruso"
 path = "src/bin/intruso.rs"
 
