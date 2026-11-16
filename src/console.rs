@@ -85,12 +85,15 @@ impl Console {
 
 /// interrupcion de recepcion: vacia la fifo y despierta a los lectores si hay una linea completa
 pub fn irq() {
+    // primero se reconoce la interrupcion y despues se vacia la fifo: un caracter que llegue
+    // entre medias vuelve a levantar el aviso. al reves, el borrado se llevaba ese aviso y el
+    // caracter quedaba atascado (el UART deja de aceptar mas).
+    unsafe { write_volatile(ICR as *mut u32, INT_RX | INT_RT) };
     let mut line_done = false;
     while unsafe { read_volatile(FR as *const u32) } & FR_RXFE == 0 {
         let c = unsafe { read_volatile(DR as *const u32) } as u8;
         line_done |= con().input(c);
     }
-    unsafe { write_volatile(ICR as *mut u32, INT_RX | INT_RT) };
     if line_done {
         sched::wake_input();
     }
