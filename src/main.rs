@@ -150,6 +150,12 @@ pub extern "C" fn kmain() -> ! {
     }
 
     trap::init();
+
+    #[cfg(feature = "wx-test")]
+    unsafe {
+        (kmain as *const () as *mut u8).write_volatile(0)
+    };
+
     gic::init();
     timer::init();
 

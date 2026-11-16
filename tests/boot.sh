@@ -1,19 +1,29 @@
 #!/usr/bin/env bash
-# arranca alba en qemu un rato y comprueba que aparezcan las lineas esperadas
-# y que no haya excepciones ni panics. uso: tests/boot.sh  (BOOT_SECS=12 por defecto)
+# arranca alba en qemu y comprueba la salida. dos pruebas:
+#   1. arranque normal: lineas esperadas y ninguna excepcion, panic o ERROR
+#   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
+# uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cargo build --release
 KERNEL=target/aarch64-unknown-none-softfloat/release/alba
-OUT=$(mktemp)
 
-qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 128M -nographic \
-  -kernel "$KERNEL" >"$OUT" 2>&1 &
-PID=$!
-sleep "${BOOT_SECS:-12}"
-kill "$PID" 2>/dev/null || true
-wait "$PID" 2>/dev/null || true
+# run_qemu <segundos> -> deja la salida en $OUT
+run_qemu() {
+  OUT=$(mktemp)
+  qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 128M -nographic \
+    -kernel "$KERNEL" >"$OUT" 2>&1 &
+  local pid=$!
+  sleep "$1"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+
+fail=0
+
+# --- 1. arranque normal ---
+cargo build --release
+run_qemu "${BOOT_SECS:-12}"
 
 expected=(
   "alba 0.0.1"
@@ -31,7 +41,6 @@ expected=(
   "far=0x40080000"
 )
 
-fail=0
 for e in "${expected[@]}"; do
   grep -qF -- "$e" "$OUT" || { echo "falta: $e"; fail=1; }
 done
@@ -39,10 +48,24 @@ if grep -qE "excepcion|panic|ERROR" "$OUT"; then
   echo "la salida contiene una excepcion, panic o ERROR"
   fail=1
 fi
-
 if [ "$fail" -ne 0 ]; then
-  echo "--- salida ---"
+  echo "--- salida del arranque normal ---"
   cat "$OUT"
   exit 1
 fi
 echo "ok: arranque verificado"
+
+# --- 2. W^X: escribir en el texto debe fallar con un fallo de datos (clase 0x25) ---
+cargo build --release --features wx-test
+run_qemu 3
+if ! grep -q "excepcion sincrona: clase=0x25" "$OUT"; then
+  echo "W^X no se aplico: escribir en el texto del kernel no fallo"
+  echo "--- salida wx-test ---"
+  cat "$OUT"
+  cargo build --release >/dev/null 2>&1
+  exit 1
+fi
+echo "ok: W^X verificado"
+
+# deja el binario normal compilado
+cargo build --release >/dev/null 2>&1
