@@ -5,13 +5,26 @@ use core::arch::global_asm;
 use core::fmt::{self, Write};
 use core::panic::PanicInfo;
 
+// cabecera de imagen arm64 (protocolo de arranque de linux): con ella QEMU y los
+// firmwares reales entregan la direccion del DTB en x0 y cargan la imagen en text_offset.
 // punto de entrada: solo el core 0 sigue, los demas se duermen.
-// pone la pila, limpia .bss y salta a kmain.
+// pone la pila, limpia .bss y salta a kmain con el DTB en x0.
 global_asm!(
     r#"
 .section .text.boot
 .global _start
 _start:
+    b 4f                        // code0: salta al codigo real
+    .long 0                     // code1
+    .quad 0x80000               // text_offset
+    .quad __image_size          // image_size
+    .quad 2                     // flags: little endian, paginas de 4 KiB
+    .quad 0                     // reservados
+    .quad 0
+    .quad 0
+    .long 0x644d5241            // magic "ARM\x64"
+    .long 0
+4:  mov x20, x0
     mrs x0, mpidr_el1
     and x0, x0, #3
     cbnz x0, 1f
@@ -23,7 +36,8 @@ _start:
     b.hs 3f
     str xzr, [x0], #8
     b 2b
-3:  bl kmain
+3:  mov x0, x20
+    bl kmain
 1:  wfe
     b 1b
 "#
@@ -116,10 +130,11 @@ extern crate alloc;
 static HEAP: heap::KernelHeap = heap::KernelHeap;
 
 #[no_mangle]
-pub extern "C" fn kmain() -> ! {
-    mmu::init();
+pub extern "C" fn kmain(dtb: usize) -> ! {
     println!("alba 0.0.1");
     println!("hola desde mi propio sistema operativo");
+    println!("dtb: {:#x}", dtb);
+    mmu::init();
 
     pmm::init();
     println!(

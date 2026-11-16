@@ -42,6 +42,7 @@ SECTIONS
     }
     . = ALIGN(4096);
     __user_end = .;
+    __image_size = __user_end - __text_start;
 
     /DISCARD/ : { *(.comment) *(.eh_frame*) }
 }
