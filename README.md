@@ -42,6 +42,7 @@ versión 0.0.1. corre en aarch64 sobre la máquina `virt` de QEMU.
 | 3 | MMU con cachés, gestor de páginas físicas, heap del kernel | listo |
 | 4 | tareas del kernel, planificador round-robin con apropiación, sleep, exit | listo |
 | 5 | modo usuario (EL0), llamadas al sistema, aislamiento de memoria kernel/usuario | listo |
+| 6 | memoria fina: W^X en el kernel con páginas de 4 KiB | en curso (W^X listo; faltan espacios por proceso, cargador y DTB) |
 
 salida actual al arrancar:
 
@@ -64,7 +65,8 @@ salida actual al arrancar:
 
 **memoria** ([src/mmu.rs](src/mmu.rs), [src/pmm.rs](src/pmm.rs), [src/heap.rs](src/heap.rs)):
 
-- MMU encendida con mapeo identidad (bloques de 1 GiB y 2 MiB): dispositivos sin caché ni acceso desde EL0; 16 MiB de RAM solo para el kernel; el resto de la RAM accesible desde EL0 y nunca ejecutable por el kernel
+- MMU encendida con mapeo identidad (bloques de 1 GiB y 2 MiB, y páginas de 4 KiB en el primer bloque): dispositivos sin caché ni acceso desde EL0; 16 MiB de RAM solo para el kernel; el resto de la RAM accesible desde EL0 y nunca ejecutable por el kernel
+- W^X en el kernel: texto de solo lectura y ejecutable, rodata de solo lectura, datos/pilas/heap escribibles sin ejecución; el arranque de prueba comprueba que escribir en el texto da un fallo
 - páginas físicas de 4 KiB con bitmap, con reserva de rangos contiguos
 - heap por clases de tamaño de 16 a 2048 bytes con listas libres; páginas contiguas para tamaños mayores
 
@@ -86,7 +88,7 @@ salida actual al arrancar:
 
 limitaciones conocidas, a resolver en las próximas etapas:
 
-- los programas de usuario viven en la imagen del kernel (sección `.user`) y comparten un único espacio de direcciones; falta W^X con tablas de 4 KiB, espacios de direcciones por proceso y un cargador de programas
+- los programas de usuario viven en la imagen del kernel (sección `.user`) y comparten un único espacio de direcciones; faltan espacios de direcciones por proceso y un cargador de programas
 - el tamaño de RAM está fijo en 128 MiB; falta leerlo del DTB
 - el heap no es seguro de usar desde manejadores de interrupción
 - solo un core activo
@@ -98,7 +100,7 @@ limitaciones conocidas, a resolver en las próximas etapas:
 3. memoria física, MMU y heap (listo)
 4. tareas, planificador y cambio de contexto (listo)
 5. modo usuario (EL0) y llamadas al sistema (listo)
-6. memoria fina: tablas de 4 KiB, W^X, espacio de direcciones por proceso, lectura del DTB
+6. memoria fina: W^X con tablas de 4 KiB (listo), espacio de direcciones por proceso, cargador de programas, lectura del DTB
 7. drivers virtio: disco, red, teclado y ratón; sistema de archivos propio
 8. shell, biblioteca estándar propia y programas de usuario
 9. GPU virtio, framebuffer, compositor y escritorio estilo macOS
@@ -130,6 +132,9 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
     ├── Cargo.toml
     ├── linker.ld          mapa de memoria del kernel
     ├── Makefile
+    ├── build.rs           reenlaza si cambia linker.ld
+    ├── tests/boot.sh      pruebas de arranque, modo usuario y W^X
+    ├── docs/ARQUITECTURA.md
     └── src/
         ├── main.rs        arranque, UART, kmain
         ├── trap.rs        vectores y manejadores de excepciones

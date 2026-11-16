@@ -46,7 +46,8 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 
 - **MMU** ([src/mmu.rs](../src/mmu.rs)): mapeo identidad. nivel 1 con un bloque de 1 GiB para dispositivos (Device-nGnRnE, sin ejecución, sin acceso EL0) y una tabla de nivel 2 con bloques de 2 MiB para la RAM (Normal write-back). las caches están encendidas.
   - el procesador prohíbe ejecutar en EL1 una página escribible desde EL0, por eso el kernel (16 MiB, `AP=00`) y el código de usuario (`AP=01`, `PXN`) están en bloques distintos. el primer intento de dar acceso EL0 a toda la RAM colgó el arranque por esa regla.
-  - provisional hasta tener tablas de 4 KiB con W^X y un espacio de direcciones por proceso.
+  - el primer bloque de 2 MiB (donde vive la imagen) usa una tabla de nivel 3 con páginas de 4 KiB: texto `AP_RO` ejecutable, rodata `AP_RO` + `PXN`, el resto (datos, bss, pilas, memoria libre) escribible + `PXN`. los demás bloques del kernel también son `PXN`. el linker alinea cada sección a página y exporta `__text_*` y `__rodata_*`.
+  - pendiente: un espacio de direcciones por proceso.
 - **pmm** ([src/pmm.rs](../src/pmm.rs)): bitmap de páginas de 4 KiB con dos zonas (kernel y usuario). reserva rangos contiguos con una pista de búsqueda por zona.
 - **heap** ([src/heap.rs](../src/heap.rs)): clases de 16 a 2048 bytes con listas libres intrusivas; cada bloque queda alineado a su tamaño. lo mayor a 2048 usa páginas contiguas. no es seguro desde irq.
 
@@ -78,4 +79,4 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 
 ## pruebas
 
-`tests/boot.sh` compila, arranca alba en QEMU unos segundos y verifica las líneas esperadas y la ausencia de excepciones. corre en cada push en GitHub Actions.
+`tests/boot.sh` hace dos pruebas en QEMU: (1) arranque normal con las líneas esperadas, tareas, modo usuario, intruso detenido y ninguna excepción; (2) con la feature `wx-test`, escribir en el texto del kernel debe dar un fallo de datos (clase `0x25`). corre en cada push en GitHub Actions.
