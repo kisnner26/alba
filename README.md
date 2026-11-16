@@ -43,7 +43,7 @@ versión 0.0.1. corre en aarch64 sobre la máquina `virt` de QEMU.
 | 4 | tareas del kernel, planificador round-robin con apropiación, sleep, exit | listo |
 | 5 | modo usuario (EL0), llamadas al sistema, aislamiento de memoria kernel/usuario | listo |
 | 6 | memoria fina: W^X con páginas de 4 KiB, RAM leída del DTB, espacios de direcciones por proceso y cargador de imagen | listo |
-| 7 | virtio-blk y sistema de archivos propio (albafs) | en curso: disco, lectura y escritura de sectores y albafs de solo lectura listos |
+| 7 | virtio-blk, sistema de archivos propio (albafs) y ejecutables ELF desde el disco | en curso: disco, albafs de lectura y `exec` de ELF listos |
 
 salida actual al arrancar:
 
@@ -75,9 +75,11 @@ salida actual al arrancar:
 
 **disco y sistema de archivos** ([src/virtio.rs](src/virtio.rs), [src/blk.rs](src/blk.rs), [src/fs.rs](src/fs.rs), [docs/albafs.md](docs/albafs.md)): transporte virtio-mmio moderno con sondeo de las 32 ranuras, driver de bloque con una cola de tres descriptores por petición, y `albafs`, un formato propio (superbloque, directorio plano, archivos contiguos). `tools/mkfs.py` crea el disco a partir de la carpeta `disk/`. el kernel valida el superbloque y el directorio antes de confiar en ellos. por ahora la espera de cada petición es por sondeo; las interrupciones de virtio llegarán después.
 
-**espacios de direcciones** ([src/vm.rs](src/vm.rs)): cada proceso tiene tablas propias (niveles 1, 2 y 3), un ASID de 8 bits y ve su imagen en `0x8000_0000` (solo lectura y ejecución), una página de datos en `0x8010_0000` y la pila bajo `0x8020_0000`. todo lo demás está sin mapear: ni siquiera existe la memoria de otros procesos ni la del kernel para EL0. el cargador copia la imagen de usuario embebida en el kernel a páginas nuevas y puestas a cero. el planificador cambia `TTBR0` solo cuando cambia el espacio. el test prueba que dos procesos que escriben en la misma dirección virtual no se pisan.
+**espacios de direcciones** ([src/vm.rs](src/vm.rs)): cada proceso tiene tablas propias (niveles 1, 2 y 3), un ASID de 8 bits y ve los segmentos de su programa desde `0x8000_0000`, cada uno con sus permisos, y la pila bajo `0x8020_0000`. todo lo demás está sin mapear: ni siquiera existe la memoria de otros procesos ni la del kernel para EL0. el planificador cambia `TTBR0` solo cuando cambia el espacio. el test prueba que dos procesos que escriben en la misma dirección virtual no se pisan.
 
-**modo usuario y llamadas al sistema** ([src/syscall.rs](src/syscall.rs), [src/user.rs](src/user.rs)):
+**ejecutables** ([src/elf.rs](src/elf.rs), [src/vm.rs](src/vm.rs), [user/](user/)): los programas de usuario son un crate aparte con su propia biblioteca mínima (llamadas al sistema, `println!`, pánico), el embrión de la biblioteca estándar de alba. se compilan a ELF con su propio mapa de memoria (`user/user.ld`), se empaquetan en el disco con `tools/mkdisk.sh` y `exec` los lee de albafs. el cargador ELF valida cada campo del archivo, copia cada segmento a páginas nuevas y puestas a cero (el `.bss` queda en ceros), le da los permisos del segmento y rechaza cualquier segmento escribible y ejecutable a la vez, segmentos solapados, fuera de rango o un punto de entrada fuera del código. los tests comprueban que un archivo basura, uno no ejecutable y uno inexistente se rechazan sin afectar al sistema.
+
+**modo usuario y llamadas al sistema** ([src/syscall.rs](src/syscall.rs)):
 
 - las tareas de usuario corren en EL0 con su propia pila de usuario y pila de kernel
 - `svc #0` con el número en `x8` y argumentos en `x0`-`x2`; llamadas actuales: `write`, `exit`, `sleep`, `getpid`, `yield`
@@ -95,7 +97,7 @@ salida actual al arrancar:
 
 limitaciones conocidas, a resolver en las próximas etapas:
 
-- los programas de usuario siguen embebidos en la imagen del kernel; falta un cargador de ejecutables desde un sistema de archivos
+- los programas no reciben argumentos ni variables de entorno; `exec` es una función del kernel, todavía no una llamada al sistema (no hay `fork`/`exec` desde usuario)
 - la RAM máxima soportada es 1 GiB (una tabla de nivel 2)
 - el heap no es seguro de usar desde manejadores de interrupción
 - solo un core activo
@@ -142,6 +144,7 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
     ├── Makefile
     ├── tools/mkimage.py   genera la imagen plana a partir del ELF
     ├── tools/mkfs.py      crea un disco albafs desde la carpeta disk/
+    ├── user/              programas de usuario (crate propio: biblioteca + programas)
     ├── disk/              archivos que van al disco de prueba
     ├── build.rs           reenlaza si cambia linker.ld
     ├── tests/boot.sh      pruebas de arranque, modo usuario y W^X
@@ -159,7 +162,7 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
         ├── blk.rs         driver de bloque
         ├── fs.rs          albafs (lectura)
         ├── vm.rs          espacios de direcciones y cargador
-        ├── user.rs        programas de usuario de demostración
+        ├── elf.rs         lector de ELF64
         ├── mmu.rs         memoria virtual
         ├── pmm.rs         memoria física
         └── heap.rs        asignador del kernel

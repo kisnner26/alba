@@ -19,8 +19,9 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 | `0x4008_0000` | inicio del kernel (`.text`, `.rodata`, `.data`, `.bss`) |
 | tras `.bss` | pila de arranque de 64 KiB (`__stack_top`); después, páginas del kernel administradas por `pmm` |
 | `0x4100_0000` - fin de RAM (del DTB, hasta 1 GiB) | memoria de procesos: el kernel la ve por identidad (sin ejecución), EL0 no |
-| `0x8000_0000` | (solo dentro de cada proceso) imagen de usuario R-X |
-| `0x8010_0000` | (solo dentro de cada proceso) página de datos RW |
+| `0x8000_0000` - `0x801f_c000` | (solo dentro de cada proceso) segmentos del programa, con los permisos de cada uno |
+| `0x801f_c000` | (solo dentro de cada proceso) página de guarda, sin mapear |
+| `0x801f_e000` | (solo dentro de cada proceso) pila de 2 páginas |
 | `0x8020_0000` | (solo dentro de cada proceso) tope de la pila de usuario |
 
 ## flujo de arranque
@@ -76,14 +77,14 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 ## modo usuario y llamadas al sistema
 
 - un proceso de usuario tiene su propio espacio de direcciones ([src/vm.rs](../src/vm.rs)): tablas de nivel 1, 2 y 3 y un ASID (1-255; el 0 es del kernel). las entradas 0 (dispositivos) y 1 (RAM) del nivel 1 se comparten con el kernel, pero sus páginas son solo EL1; la entrada 2 apunta a las tablas del proceso.
-- el cargador copia la imagen embebida (sección `.user`, enlazada en `0x8000_0000` y almacenada tras el kernel) a páginas nuevas puestas a cero, mapeadas R-X, más una página de datos y 2 de pila RW sin ejecución. las entradas son `nG` (etiquetadas con el ASID), así que cambiar de proceso no vacía la TLB.
+- el cargador ([src/vm.rs](../src/vm.rs), [src/elf.rs](../src/elf.rs)) lee el ELF desde albafs, valida cabecera y segmentos, y por cada `PT_LOAD` reserva páginas puestas a cero, copia `filesz` bytes (el resto hasta `memsz`, el `.bss`, queda en ceros) y mapea con los permisos del segmento: texto R-X, rodata R--, datos RW- sin ejecución. rechaza segmentos W+X, solapados, sin alinear a página, fuera de `0x8000_0000..0x801f_c000` o un punto de entrada que no caiga en código. después mapea 2 páginas de pila RW sin ejecución. las entradas son `nG` (etiquetadas con el ASID), así que cambiar de proceso no vacía la TLB.
 - `mmu::switch_ttbr` reescribe `TTBR0` solo si cambia el espacio. al terminar el proceso, `destroy` invalida su ASID en la TLB y libera tablas y páginas.
 - una tarea de usuario arranca en `task_user_trampoline`, que limpia los registros y hace `eret` a EL0 con `SPSR=0` (interrupciones activas).
 - las excepciones desde EL0 entran por los vectores `0x400` (sync) y `0x480` (irq). el marco guarda `sp_el0`.
 - `svc #0`: número en `x8`, argumentos `x0`-`x2`, resultado en `x0` (`u64::MAX` = error). tabla en [src/syscall.rs](../src/syscall.rs).
 - el kernel nunca confía en un puntero de EL0: `write` comprueba que el rango caiga entero dentro de una región mapeada del proceso actual.
 - cualquier otra excepción desde EL0 (por ejemplo leer memoria del kernel) termina solo esa tarea.
-- los programas de demostración viven en la sección `.user` ([src/user.rs](../src/user.rs)) y no pueden llamar a código del kernel salvo por `svc`. como se enlazan en `0x8000_0000`, el mismo binario corre en cualquier proceso.
+- los programas son un crate aparte ([user/](../user/)): la biblioteca `alba` da las llamadas al sistema y `println!`, y `user/user.ld` les da un mapa de memoria con segmentos alineados a página. `tools/mkdisk.sh` los compila y los empaqueta en el disco; el kernel ya no lleva programas embebidos. como se enlazan en `0x8000_0000`, el mismo binario corre en cualquier proceso.
 
 ## decisiones
 
