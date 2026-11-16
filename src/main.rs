@@ -87,6 +87,7 @@ mod trap;
 mod virtio;
 mod vm;
 
+#[cfg(feature = "autotest")]
 fn demo_a() {
     for i in 1..=4 {
         println!("[a] paso {}", i);
@@ -95,6 +96,7 @@ fn demo_a() {
     println!("[a] fin");
 }
 
+#[cfg(feature = "autotest")]
 fn demo_b() {
     for i in 1..=4 {
         println!("[b] paso {}", i);
@@ -103,6 +105,7 @@ fn demo_b() {
     println!("[b] fin");
 }
 
+#[cfg(feature = "autotest")]
 // nunca cede la cpu: demuestra que el timer la recupera
 fn busy(name: &str) -> ! {
     let mut n: u64 = 0;
@@ -114,10 +117,12 @@ fn busy(name: &str) -> ! {
     }
 }
 
+#[cfg(feature = "autotest")]
 fn demo_busy_1() {
     busy("ocupada-1")
 }
 
+#[cfg(feature = "autotest")]
 // codigo distinto a demo_busy_1 a proposito: si el estado de excepcion de una
 // tarea se mezclara con el de otra, esta tarea saltaria al codigo ajeno
 fn demo_busy_2() {
@@ -223,16 +228,28 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
     console::init();
 
     sched::init();
-    sched::spawn(demo_a);
-    sched::spawn(demo_b);
-    sched::spawn(demo_busy_1);
-    sched::spawn(demo_busy_2);
-    // programas de usuario cargados desde el disco (dos copias de hola: cada una en su espacio)
-    for prog in ["hola", "hola", "intruso", "intruso2", "lanzador", "leer", "basura", "hola.txt", "noexiste"] {
-        match sched::exec(prog) {
-            Ok(pid) => println!("exec {}: pid {}", prog, pid),
-            Err(e) => println!("exec {}: rechazado ({})", prog, e),
+
+    // bateria de pruebas: tareas de kernel, procesos de usuario y casos que el cargador debe
+    // rechazar. solo con la feature autotest; el arranque normal va directo a la shell.
+    #[cfg(feature = "autotest")]
+    {
+        sched::spawn(demo_a);
+        sched::spawn(demo_b);
+        sched::spawn(demo_busy_1);
+        sched::spawn(demo_busy_2);
+        // dos copias de hola: cada una en su propio espacio de direcciones
+        for prog in ["hola", "hola", "intruso", "intruso2", "lanzador", "basura", "hola.txt", "noexiste"] {
+            match sched::exec(prog) {
+                Ok(pid) => println!("exec {}: pid {}", prog, pid),
+                Err(e) => println!("exec {}: rechazado ({})", prog, e),
+            }
         }
+    }
+
+    // proceso inicial: la shell, cargada desde el disco
+    match sched::exec("sh") {
+        Ok(pid) => println!("init: shell lanzada (pid {})", pid),
+        Err(e) => println!("init: no se pudo lanzar la shell ({})", e),
     }
 
     unsafe { core::arch::asm!("msr daifclr, #2") }; // desenmascara irq

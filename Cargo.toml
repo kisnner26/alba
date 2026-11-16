@@ -5,6 +5,8 @@ edition = "2021"
 
 [features]
 crash-test = []
+# tareas y programas de prueba al arrancar (los usa tests/boot.sh); sin ella se va directo a la shell
+autotest = []
 # intenta escribir en el texto del kernel: debe fallar por W^X
 wx-test = []
 

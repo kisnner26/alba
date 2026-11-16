@@ -90,6 +90,7 @@ task_user_trampoline:
 
 extern "C" {
     fn switch_to(old_sp: *mut usize, new_sp: usize);
+    #[cfg_attr(not(feature = "autotest"), allow(dead_code))]
     fn task_trampoline();
     fn task_user_trampoline();
 }
@@ -175,7 +176,8 @@ fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>) -> us
     id
 }
 
-/// tarea de kernel
+/// tarea de kernel (solo la usa la bateria de pruebas)
+#[cfg_attr(not(feature = "autotest"), allow(dead_code))]
 pub fn spawn(f: fn()) -> usize {
     new_task([f as usize, 0, 0, 0], task_trampoline as *const () as usize, None)
 }
