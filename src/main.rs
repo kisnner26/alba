@@ -70,6 +70,7 @@ macro_rules! println {
     }};
 }
 
+mod blk;
 mod fdt;
 mod gic;
 mod heap;
@@ -178,6 +179,21 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
     }
 
     virtio::scan();
+    if blk::init() {
+        println!("disco: {} sectores de {} bytes", blk::sectors(), blk::SECTOR);
+        let mut sector = [0u8; blk::SECTOR];
+        if blk::read(0, &mut sector) {
+            println!("disco: sector 0 = {:?}", core::str::from_utf8(&sector[..8]).unwrap_or("?"));
+        }
+        // escribir y volver a leer el ultimo sector (el sistema de archivos no lo usa)
+        let last = blk::sectors() - 1;
+        let pattern = [0xa5u8; blk::SECTOR];
+        let mut back = [0u8; blk::SECTOR];
+        let ok = blk::write(last, &pattern) && blk::read(last, &mut back) && back == pattern;
+        println!("disco: escritura y lectura del sector {} {}", last, if ok { "ok" } else { "FALLO" });
+    } else {
+        println!("disco: no hay dispositivo de bloque");
+    }
 
     trap::init();
 
