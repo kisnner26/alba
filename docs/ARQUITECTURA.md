@@ -15,10 +15,11 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 | `0x0800_0000` | distribuidor del GICv2 |
 | `0x0801_0000` | interfaz de cpu del GICv2 |
 | `0x0900_0000` | UART PL011 |
-| `0x4000_0000` - `0x4800_0000` | RAM (128 MiB) |
+| `0x4000_0000` - `0x4100_0000` | zona del kernel (16 MiB), solo EL1 |
 | `0x4008_0000` | inicio del kernel (`.text`, `.rodata`, `.data`, `.bss`) |
-| tras `.bss` | pila de arranque de 64 KiB (`__stack_top`) |
-| tras la pila | páginas libres administradas por `pmm` |
+| tras `.bss` | pila de arranque de 64 KiB (`__stack_top`); después, páginas del kernel administradas por `pmm` |
+| `0x4100_0000` | sección `.user`: código y datos de los programas de usuario (EL0 lectura, escritura, ejecución) |
+| tras `.user` - `0x4800_0000` | zona de usuario: pilas y datos, EL0 lectura y escritura, sin ejecución |
 
 ## flujo de arranque
 
@@ -43,8 +44,10 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 
 ## memoria
 
-- **MMU** ([src/mmu.rs](../src/mmu.rs)): mapeo identidad con bloques de 1 GiB. `0x0` dispositivos (Device-nGnRnE, sin ejecución), `0x4000_0000` RAM (Normal write-back, inner shareable). mantiene cachés encendidas; es provisional hasta tener tablas finas y W^X.
-- **pmm** ([src/pmm.rs](../src/pmm.rs)): bitmap de páginas de 4 KiB. reserva rangos contiguos con búsqueda desde una pista (`HINT`).
+- **MMU** ([src/mmu.rs](../src/mmu.rs)): mapeo identidad. nivel 1 con un bloque de 1 GiB para dispositivos (Device-nGnRnE, sin ejecución, sin acceso EL0) y una tabla de nivel 2 con bloques de 2 MiB para la RAM (Normal write-back). las caches están encendidas.
+  - el procesador prohíbe ejecutar en EL1 una página escribible desde EL0, por eso el kernel (16 MiB, `AP=00`) y el código de usuario (`AP=01`, `PXN`) están en bloques distintos. el primer intento de dar acceso EL0 a toda la RAM colgó el arranque por esa regla.
+  - provisional hasta tener tablas de 4 KiB con W^X y un espacio de direcciones por proceso.
+- **pmm** ([src/pmm.rs](../src/pmm.rs)): bitmap de páginas de 4 KiB con dos zonas (kernel y usuario). reserva rangos contiguos con una pista de búsqueda por zona.
 - **heap** ([src/heap.rs](../src/heap.rs)): clases de 16 a 2048 bytes con listas libres intrusivas; cada bloque queda alineado a su tamaño. lo mayor a 2048 usa páginas contiguas. no es seguro desde irq.
 
 ## tareas y planificador
@@ -56,11 +59,21 @@ este documento describe cómo está construido alba hoy y por qué. se actualiza
 - `exit` deja la tarea en una lista de zombis; su pila se libera desde otra tarea (`reap`), nunca desde la propia.
 - invariante: toda mutación del planificador ocurre con irq enmascaradas (un solo core). `irq::save` / `irq::restore` son las secciones críticas.
 
+## modo usuario y llamadas al sistema
+
+- una tarea de usuario tiene pila de kernel (16 KiB, zona kernel) y pila de usuario (8 KiB, zona usuario). arranca en `task_user_trampoline`, que limpia los registros y hace `eret` a EL0 con `SPSR=0` (interrupciones activas).
+- las excepciones desde EL0 entran por los vectores `0x400` (sync) y `0x480` (irq). el marco guarda `sp_el0`.
+- `svc #0`: número en `x8`, argumentos `x0`-`x2`, resultado en `x0` (`u64::MAX` = error). tabla en [src/syscall.rs](../src/syscall.rs).
+- el kernel nunca confía en un puntero de EL0: `write` comprueba que el rango esté dentro de la zona de usuario.
+- cualquier otra excepción desde EL0 (por ejemplo leer memoria del kernel) termina solo esa tarea.
+- los programas de demostración viven en la sección `.user` ([src/user.rs](../src/user.rs)) y no pueden llamar a código del kernel salvo por `svc`.
+
 ## decisiones
 
 - **rust sin dependencias**: el objetivo es que todo sea código propio; `core` y `alloc` vienen con el compilador.
 - **aarch64 primero**: misma familia que el hardware de desarrollo y sin el legado de x86.
 - **QEMU `virt`**: hardware simple y documentado para avanzar rápido; el hardware real llega en la etapa 11.
+- **dos zonas de memoria fijas**: la forma más corta de tener aislamiento real kernel/usuario antes de las tablas finas.
 - **round-robin simple**: suficiente para validar el cambio de contexto; prioridades vendrán con la carga real.
 
 ## pruebas

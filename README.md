@@ -41,6 +41,7 @@ versión 0.0.1. corre en aarch64 sobre la máquina `virt` de QEMU.
 | 2 | vectores de excepciones EL1, GICv2, temporizador genérico a 10 Hz | listo |
 | 3 | MMU con cachés, gestor de páginas físicas, heap del kernel | listo |
 | 4 | tareas del kernel, planificador round-robin con apropiación, sleep, exit | listo |
+| 5 | modo usuario (EL0), llamadas al sistema, aislamiento de memoria kernel/usuario | listo |
 
 salida actual al arrancar:
 
@@ -63,9 +64,16 @@ salida actual al arrancar:
 
 **memoria** ([src/mmu.rs](src/mmu.rs), [src/pmm.rs](src/pmm.rs), [src/heap.rs](src/heap.rs)):
 
-- MMU encendida con mapeo identidad en bloques de 1 GiB: `0x0000_0000` dispositivos sin caché, `0x4000_0000` RAM con caché write-back
+- MMU encendida con mapeo identidad (bloques de 1 GiB y 2 MiB): dispositivos sin caché ni acceso desde EL0; 16 MiB de RAM solo para el kernel; el resto de la RAM accesible desde EL0 y nunca ejecutable por el kernel
 - páginas físicas de 4 KiB con bitmap, con reserva de rangos contiguos
 - heap por clases de tamaño de 16 a 2048 bytes con listas libres; páginas contiguas para tamaños mayores
+
+**modo usuario y llamadas al sistema** ([src/syscall.rs](src/syscall.rs), [src/user.rs](src/user.rs)):
+
+- las tareas de usuario corren en EL0 con su propia pila de usuario y pila de kernel
+- `svc #0` con el número en `x8` y argumentos en `x0`-`x2`; llamadas actuales: `write`, `exit`, `sleep`, `getpid`, `yield`
+- el kernel valida cada puntero que llega de EL0 antes de usarlo
+- un programa que toca memoria del kernel o de dispositivos recibe un fallo de hardware y su tarea se termina sin afectar al sistema; el arranque de prueba lo verifica con un programa intruso
 
 **procesos y planificador** ([src/sched.rs](src/sched.rs), [src/irq.rs](src/irq.rs)):
 
@@ -78,7 +86,7 @@ salida actual al arrancar:
 
 limitaciones conocidas, a resolver en las próximas etapas:
 
-- toda la RAM es legible, escribible y ejecutable; falta W^X con tablas finas y espacios de direcciones por proceso
+- los programas de usuario viven en la imagen del kernel (sección `.user`) y comparten un único espacio de direcciones; falta W^X con tablas de 4 KiB, espacios de direcciones por proceso y un cargador de programas
 - el tamaño de RAM está fijo en 128 MiB; falta leerlo del DTB
 - el heap no es seguro de usar desde manejadores de interrupción
 - solo un core activo
@@ -89,7 +97,7 @@ limitaciones conocidas, a resolver en las próximas etapas:
 2. excepciones, GIC y temporizador (listo)
 3. memoria física, MMU y heap (listo)
 4. tareas, planificador y cambio de contexto (listo)
-5. modo usuario (EL0) y llamadas al sistema
+5. modo usuario (EL0) y llamadas al sistema (listo)
 6. memoria fina: tablas de 4 KiB, W^X, espacio de direcciones por proceso, lectura del DTB
 7. drivers virtio: disco, red, teclado y ratón; sistema de archivos propio
 8. shell, biblioteca estándar propia y programas de usuario
@@ -129,6 +137,8 @@ para probar el manejador de excepciones, compilar con la feature `crash-test`, q
         ├── timer.rs       temporizador del sistema
         ├── irq.rs         secciones críticas
         ├── sched.rs       tareas y planificador
+        ├── syscall.rs     llamadas al sistema
+        ├── user.rs        programas de usuario de demostración
         ├── mmu.rs         memoria virtual
         ├── pmm.rs         memoria física
         └── heap.rs        asignador del kernel
