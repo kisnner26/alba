@@ -112,6 +112,7 @@ struct Task {
 enum Wait {
     Child(usize), // espera a que termine el proceso con ese id
     Input,        // espera entrada de la consola
+    Disk,         // espera que el disco termine una peticion
 }
 
 enum Mode {
@@ -123,8 +124,8 @@ enum Mode {
 
 struct Sched {
     current: Option<Box<Task>>,
-    ready: VecDeque<Box<Task>>,
     idle: Option<Box<Task>>, // la tarea 0 cuando no esta corriendo: solo se elige si no hay nada mas
+    ready: VecDeque<Box<Task>>,
     sleeping: Vec<Box<Task>>,
     blocked: Vec<Box<Task>>,
     zombies: Vec<Box<Task>>,
@@ -145,8 +146,8 @@ pub fn init() {
     unsafe {
         *addr_of_mut!(S) = Some(Sched {
             current: Some(t),
-            ready: VecDeque::new(),
             idle: None,
+            ready: VecDeque::new(),
             sleeping: Vec::new(),
             blocked: Vec::new(),
             zombies: Vec::new(),
@@ -302,9 +303,9 @@ fn switch_away(mode: Mode) {
     mmu::switch_ttbr(next.ttbr);
     s.current = Some(next);
     match mode {
-        Mode::Ready => s.ready.push_back(cur),
         // la idle no entra en la rotacion: se aparta hasta que no haya nada mas que correr
         Mode::Ready if cur.id == 0 => s.idle = Some(cur),
+        Mode::Ready => s.ready.push_back(cur),
         Mode::Sleep => s.sleeping.push(cur),
         Mode::Block => s.blocked.push(cur),
         Mode::Dead => s.zombies.push(cur),
@@ -410,6 +411,29 @@ pub fn wake_input() {
             t.wait = None;
             s.ready.push_back(t);
             NEED.store(true, Ordering::Relaxed); // que el lector corra en cuanto acabe la irq
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// bloquea la tarea actual hasta que `wake_disk` la despierte. quien llama debe tener las
+/// interrupciones enmascaradas y haber comprobado que la peticion aun no ha terminado.
+pub fn wait_disk() {
+    sched().current.as_mut().unwrap().wait = Some(Wait::Disk);
+    switch_away(Mode::Block);
+}
+
+/// despierta a las tareas que esperan al disco (se llama desde la irq)
+pub fn wake_disk() {
+    let s = sched();
+    let mut i = 0;
+    while i < s.blocked.len() {
+        if s.blocked[i].wait == Some(Wait::Disk) {
+            let mut t = s.blocked.swap_remove(i);
+            t.wait = None;
+            s.ready.push_back(t);
+            NEED.store(true, Ordering::Relaxed);
         } else {
             i += 1;
         }

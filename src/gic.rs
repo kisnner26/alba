@@ -39,6 +39,7 @@ pub fn dispatch() {
     match id {
         crate::timer::IRQ => crate::timer::tick(),
         crate::console::IRQ => crate::console::irq(),
+        48..=79 => crate::blk::irq(id), // ranuras virtio-mmio
         1020..=1023 => return, // espuria
         _ => crate::println!("irq sin manejador: {}", id),
     }

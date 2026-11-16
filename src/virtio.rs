@@ -22,6 +22,8 @@ pub const QUEUE_NUM_MAX: usize = 0x034;
 pub const QUEUE_NUM: usize = 0x038;
 pub const QUEUE_READY: usize = 0x044;
 pub const QUEUE_NOTIFY: usize = 0x050;
+pub const INTERRUPT_STATUS: usize = 0x060;
+pub const INTERRUPT_ACK: usize = 0x064;
 pub const STATUS: usize = 0x070;
 pub const QUEUE_DESC_LOW: usize = 0x080;
 pub const QUEUE_DESC_HIGH: usize = 0x084;
@@ -48,6 +50,12 @@ impl Mmio {
 
     pub fn write(&self, reg: usize, value: u32) {
         unsafe { ((self.0 + reg) as *mut u32).write_volatile(value) };
+    }
+
+    /// numero de interrupcion (SPI) de esta ranura en QEMU virt: la primera ranura es la SPI 16,
+    /// o sea INTID 48
+    pub fn irq(&self) -> u32 {
+        48 + ((self.0 - BASE) / STRIDE) as u32
     }
 
     /// lee un campo de 64 bits de la configuracion del dispositivo

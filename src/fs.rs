@@ -74,21 +74,14 @@ pub fn find(name: &str) -> Option<&'static Entry> {
     files().iter().find(|e| e.name == name)
 }
 
-/// contenido completo de un archivo
+/// contenido completo de un archivo, leido con una sola peticion de varios sectores
 pub fn read(name: &str) -> Option<Vec<u8>> {
     let e = find(name)?;
-    let mut data = Vec::with_capacity(e.size as usize);
-    let mut sector = [0u8; SECTOR];
-    let mut left = e.size as usize;
-    let mut s = e.start as u64;
-    while left > 0 {
-        if !blk::read(s, &mut sector) {
-            return None;
-        }
-        let n = left.min(SECTOR);
-        data.extend_from_slice(&sector[..n]);
-        left -= n;
-        s += 1;
+    let size = e.size as usize;
+    let mut data = alloc::vec![0u8; size.div_ceil(SECTOR) * SECTOR];
+    if !data.is_empty() && !blk::read_sectors(e.start as u64, &mut data) {
+        return None;
     }
+    data.truncate(size);
     Some(data)
 }

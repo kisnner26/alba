@@ -253,6 +253,7 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
     }
 
     unsafe { core::arch::asm!("msr daifclr, #2") }; // desenmascara irq
+    blk::enable_irq(); // desde aqui el disco avisa por interrupcion en vez de sondeo
 
     #[cfg(feature = "crash-test")]
     unsafe {
