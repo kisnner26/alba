@@ -6,7 +6,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-KERNEL=target/aarch64-unknown-none-softfloat/release/alba
+ELF=target/aarch64-unknown-none-softfloat/release/alba
+KERNEL=$ELF.bin
+
+# compila y genera la imagen plana con cabecera arm64 (QEMU entrega el DTB en x0)
+build() {
+  cargo build --release "$@"
+  python3 tools/mkimage.py "$ELF" "$KERNEL"
+}
 
 # run_qemu <segundos> -> deja la salida en $OUT
 run_qemu() {
@@ -22,7 +29,7 @@ run_qemu() {
 fail=0
 
 # --- 1. arranque normal ---
-cargo build --release
+build
 run_qemu "${BOOT_SECS:-12}"
 
 expected=(
@@ -56,16 +63,16 @@ fi
 echo "ok: arranque verificado"
 
 # --- 2. W^X: escribir en el texto debe fallar con un fallo de datos (clase 0x25) ---
-cargo build --release --features wx-test
+build --features wx-test
 run_qemu 3
 if ! grep -q "excepcion sincrona: clase=0x25" "$OUT"; then
   echo "W^X no se aplico: escribir en el texto del kernel no fallo"
   echo "--- salida wx-test ---"
   cat "$OUT"
-  cargo build --release >/dev/null 2>&1
+  build >/dev/null 2>&1
   exit 1
 fi
 echo "ok: W^X verificado"
 
 # deja el binario normal compilado
-cargo build --release >/dev/null 2>&1
+build >/dev/null 2>&1
