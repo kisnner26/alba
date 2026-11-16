@@ -7,7 +7,7 @@
 //   3  getpid()              id de la tarea
 //   4  yield()               cede la cpu
 
-use crate::{irq, mmu, sched};
+use crate::{irq, sched};
 use core::fmt::Write;
 
 const ERR: u64 = u64::MAX;
@@ -29,14 +29,8 @@ pub fn dispatch(nr: u64, a: [u64; 3]) -> u64 {
     }
 }
 
-/// el rango debe estar dentro de la memoria de usuario: nunca se confia en un puntero de EL0
-fn user_range_ok(ptr: u64, len: u64) -> bool {
-    let (lo, hi) = (mmu::KERNEL_ZONE_END as u64, mmu::ram_end() as u64);
-    len <= 4096 && ptr >= lo && ptr.checked_add(len).is_some_and(|end| end <= hi)
-}
-
 fn write(fd: u64, ptr: u64, len: u64) -> u64 {
-    if fd != 1 || !user_range_ok(ptr, len) {
+    if fd != 1 || len > 4096 || !sched::user_range_ok(ptr, len) {
         return ERR;
     }
     let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };

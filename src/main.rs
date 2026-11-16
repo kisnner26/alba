@@ -81,6 +81,7 @@ mod syscall;
 mod timer;
 mod trap;
 mod user;
+mod vm;
 
 fn demo_a() {
     for i in 1..=4 {

@@ -20,8 +20,7 @@ pub enum Zone {
 }
 
 extern "C" {
-    static __stack_top: u8;
-    static __user_end: u8;
+    static __user_load_end: u8;
 }
 
 struct ZoneState {
@@ -70,9 +69,9 @@ pub fn init() {
         for p in 0..npages() {
             set(p, true);
         }
-        let kfirst = page_of(align_up(addr_of!(__stack_top) as usize));
+        let kfirst = page_of(align_up(addr_of!(__user_load_end) as usize));
         let kend = page_of(KERNEL_ZONE_END);
-        let ufirst = page_of(align_up(addr_of!(__user_end) as usize));
+        let ufirst = kend;
         let z = zones();
         z[0] = ZoneState { lo: kfirst, hi: kend, hint: kfirst };
         z[1] = ZoneState { lo: ufirst, hi: npages(), hint: ufirst };

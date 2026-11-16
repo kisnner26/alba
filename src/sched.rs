@@ -9,6 +9,7 @@
 //
 // toda mutacion del planificador ocurre con irq enmascaradas (un solo core).
 
+use crate::vm::{self, AddrSpace};
 use crate::{irq, mmu, pmm, timer};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use core::arch::global_asm;
@@ -90,13 +91,11 @@ extern "C" {
     fn task_user_trampoline();
 }
 
-const USER_STACK_PAGES: usize = 2;
-
 #[allow(dead_code)]
 struct Task {
     sp: usize,
     stack: usize,  // pila del kernel; 0 = pila de arranque, no se libera
-    ustack: usize, // pila de usuario; 0 = tarea de kernel
+    space: Option<AddrSpace>, // espacio de direcciones de usuario; None = tarea de kernel
     ttbr: u64,     // espacio de direcciones (TTBR0 con ASID)
     id: usize,
     wake: u64,
@@ -125,7 +124,7 @@ fn sched() -> &'static mut Sched {
 
 /// convierte el hilo de arranque en la tarea 0
 pub fn init() {
-    let t = Box::new(Task { sp: 0, stack: 0, ustack: 0, ttbr: mmu::kernel_ttbr(), id: 0, wake: 0 });
+    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, wake: 0 });
     unsafe {
         *addr_of_mut!(S) = Some(Sched {
             current: Some(t),
@@ -139,7 +138,7 @@ pub fn init() {
 
 // crea una tarea con su pila de kernel y un marco inicial para switch_to:
 // x19 y x20 llevan datos al trampolin, x30 es la direccion donde "retorna" switch_to.
-fn new_task(x19: usize, x20: usize, trampoline: usize, ustack: usize) -> usize {
+fn new_task(x19: usize, x20: usize, trampoline: usize, space: Option<AddrSpace>) -> usize {
     let g = irq::save();
     let s = sched();
     let stack = pmm::alloc_pages(STACK_PAGES).expect("sin memoria para pila");
@@ -152,21 +151,31 @@ fn new_task(x19: usize, x20: usize, trampoline: usize, ustack: usize) -> usize {
     }
     let id = s.next_id;
     s.next_id += 1;
-    s.ready.push_back(Box::new(Task { sp, stack, ustack, ttbr: mmu::kernel_ttbr(), id, wake: 0 }));
+    let ttbr = space.as_ref().map_or(mmu::kernel_ttbr(), |sp| sp.ttbr());
+    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, wake: 0 }));
     irq::restore(g);
     id
 }
 
 /// tarea de kernel
 pub fn spawn(f: fn()) -> usize {
-    new_task(f as usize, 0, task_trampoline as *const () as usize, 0)
+    new_task(f as usize, 0, task_trampoline as *const () as usize, None)
 }
 
-/// tarea que corre en EL0 desde `entry` (direccion en la zona de usuario)
+/// proceso de usuario: espacio de direcciones propio con la imagen cargada; arranca en EL0
+/// en `entry` (direccion virtual dentro de la imagen) con la pila en vm::STACK_TOP
 pub fn spawn_user(entry: usize) -> usize {
-    let ustack = pmm::alloc_zone(pmm::Zone::User, USER_STACK_PAGES).expect("sin memoria de usuario");
-    let top = ustack + USER_STACK_PAGES * pmm::PAGE;
-    new_task(entry, top, task_user_trampoline as *const () as usize, ustack)
+    let space = AddrSpace::new().expect("sin memoria para el proceso");
+    new_task(entry, vm::STACK_TOP, task_user_trampoline as *const () as usize, Some(space))
+}
+
+/// el rango de usuario cae dentro de una region mapeada del proceso actual
+pub fn user_range_ok(ptr: u64, len: u64) -> bool {
+    sched()
+        .current
+        .as_ref()
+        .and_then(|t| t.space.as_ref())
+        .is_some_and(|sp| sp.contains(ptr as usize, len as usize))
 }
 
 #[no_mangle]
@@ -184,12 +193,12 @@ extern "C" fn task_user_start() {
 
 fn reap() {
     let s = sched();
-    for z in s.zombies.drain(..) {
+    for mut z in s.zombies.drain(..) {
         if z.stack != 0 {
             pmm::free_pages(z.stack, STACK_PAGES);
         }
-        if z.ustack != 0 {
-            pmm::free_pages(z.ustack, USER_STACK_PAGES);
+        if let Some(space) = z.space.take() {
+            space.destroy();
         }
     }
 }

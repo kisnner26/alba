@@ -3,12 +3,11 @@
 //   0x0000_0000..0x4000_0000  dispositivos (UART, GIC, ...): sin cache, sin ejecucion, sin acceso EL0
 //   0x4000_0000..0x4100_0000  zona del kernel (16 MiB). solo EL1, con W^X:
 //       texto RX, rodata R, datos/bss/pilas/heap RW sin ejecucion (paginas de 4 KiB en el primer bloque)
-//   0x4100_0000..0x4120_0000  codigo de usuario (seccion .user): EL0 lectura/escritura/ejecucion
-//   0x4120_0000..fin de RAM   datos de usuario: EL0 lectura/escritura, sin ejecucion
+//   0x4100_0000..fin de RAM   memoria de procesos: el kernel la ve (identidad, sin ejecucion),
+//                             EL0 no. cada proceso ve sus paginas en su propio espacio (vm.rs)
 //
-// regla del procesador: una pagina escribible desde EL0 nunca se ejecuta en EL1.
-// por eso el kernel y el codigo de usuario viven en bloques distintos.
-// mas adelante se reemplaza por tablas de 4 KiB con W^X y un espacio por proceso.
+// esta es la tabla base del kernel (TTBR0 de las tareas del kernel). cada proceso de usuario
+// tiene la suya: copia estas dos entradas de nivel 1 y agrega la region de usuario en 0x8000_0000.
 
 use core::arch::asm;
 
@@ -32,13 +31,14 @@ extern "C" {
 }
 
 const VALID_BLOCK: u64 = 1;
-const TABLE: u64 = 3;
-const PAGE_DESC: u64 = 3;
-const AF: u64 = 1 << 10;
-const AP_EL0: u64 = 1 << 6;
-const AP_RO: u64 = 1 << 7;
-const PXN: u64 = 1 << 53;
-const UXN: u64 = 1 << 54;
+pub const TABLE: u64 = 3;
+pub const PAGE_DESC: u64 = 3;
+pub const AF: u64 = 1 << 10;
+pub const NG: u64 = 1 << 11; // no global: la entrada se etiqueta con el ASID
+pub const AP_EL0: u64 = 1 << 6;
+pub const AP_RO: u64 = 1 << 7;
+pub const PXN: u64 = 1 << 53;
+pub const UXN: u64 = 1 << 54;
 
 pub const RAM_BASE: usize = 0x4000_0000;
 pub const KERNEL_ZONE_END: usize = 0x4100_0000;
@@ -66,6 +66,26 @@ pub fn switch_ttbr(ttbr: u64) {
     }
 }
 
+/// entradas 0 (dispositivos) y 1 (RAM) del nivel 1: los espacios de procesos las comparten
+pub fn kernel_l1() -> (u64, u64) {
+    unsafe {
+        let l1 = &*core::ptr::addr_of!(L1);
+        (l1.0[0], l1.0[1])
+    }
+}
+
+/// deja coherentes cache de datos e instrucciones tras escribir codigo en memoria
+pub fn sync_icache(start: usize, len: usize) {
+    unsafe {
+        let mut a = start & !63;
+        while a < start + len {
+            asm!("dc cvau, {}", in(reg) a);
+            a += 64;
+        }
+        asm!("dsb ish", "ic ialluis", "dsb ish", "isb");
+    }
+}
+
 /// fin de la RAM (se fija en init a partir del tamano que informa el DTB)
 pub fn ram_end() -> usize {
     unsafe { RAM_END }
@@ -84,7 +104,6 @@ pub fn init(ram_size: usize) {
         l1.0[0] = VALID_BLOCK | (0 << 2) | (2 << 8) | AF | PXN | UXN;
         l1.0[1] = core::ptr::addr_of!(L2) as u64 | TABLE;
 
-        let kernel_blocks = (KERNEL_ZONE_END - RAM_BASE) / BLOCK;
         let all_blocks = ram_size / BLOCK;
         // primer bloque: paginas de 4 KiB con W^X. nada es a la vez escribible y ejecutable.
         let l3 = &mut *core::ptr::addr_of_mut!(L3);
@@ -107,13 +126,8 @@ pub fn init(ram_size: usize) {
         for i in 1..all_blocks {
             let pa = (RAM_BASE + i * BLOCK) as u64;
             let base = pa | VALID_BLOCK | (1 << 2) | (3 << 8) | AF;
-            l2.0[i] = if i < kernel_blocks {
-                base | PXN | UXN // resto de la zona del kernel: datos, sin ejecucion
-            } else if i == kernel_blocks {
-                base | AP_EL0 | PXN // codigo de usuario
-            } else {
-                base | AP_EL0 | PXN | UXN // datos de usuario
-            };
+            // resto de la zona del kernel y memoria de procesos: solo EL1, datos, sin ejecucion
+            l2.0[i] = base | PXN | UXN;
         }
 
         let mair: u64 = 0xff00;
