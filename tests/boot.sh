@@ -45,7 +45,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS01\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 5 archivos"
+  "albafs: 6 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
@@ -62,6 +62,10 @@ expected=(
   "] datos propios intactos"
   "[intruso2] intentando escribir en su propio codigo"
   "far=0x80000000"
+  "exec hola: pid"
+  "exec basura: rechazado (no es un ELF)"
+  "exec hola.txt: rechazado (no es ejecutable)"
+  "exec noexiste: rechazado (no existe)"
 )
 
 for e in "${expected[@]}"; do
