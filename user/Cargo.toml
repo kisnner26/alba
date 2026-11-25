@@ -61,6 +61,10 @@ path = "src/bin/fscorte.rs"
 name = "uno"
 path = "src/bin/uno.rs"
 
+[[bin]]
+name = "cmp"
+path = "src/bin/cmp.rs"
+
 [profile.dev]
 panic = "abort"
 
