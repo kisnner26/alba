@@ -44,8 +44,8 @@ cortex-a72, tcg con `-icount shift=0,sleep=on`, 128 mib y consola serie.
 
 | métrica | medida |
 |---------|--------|
-| imagen plana del kernel | 69.848 bytes |
-| disco mínimo de la imagen actual | 261.632 bytes |
+| imagen plana del kernel | 69.856 bytes |
+| disco mínimo de la imagen actual | 256.512 bytes |
 | ram reservada u ocupada al llegar a la shell | 1.986.560 bytes |
 | páginas propias de la shell | 7 de kernel y 6 de usuario |
 | arranque hasta la entrada a la shell | 105.348 µs |
@@ -181,6 +181,10 @@ ejecutar:
     make test         # pruebas de arranque, modo usuario, W^X y RAM
 
 para salir de QEMU: `ctrl+a`, luego `x`.
+
+en la consola, `ps` muestra estado, tiempo en cpu, bloqueos y despertares por
+tarea. el tiempo usa el contador del procesador entre cambios de tarea,
+sin programar interrupciones adicionales.
 
 ### salida gráfica en qemu
 
