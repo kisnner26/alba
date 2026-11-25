@@ -21,7 +21,7 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8) -> ! {
             match alba::read(fd, &mut buf) {
                 Some(0) => break,
                 Some(n) => {
-                    alba::write(&buf[..n]);
+                    if alba::write(&buf[..n]) != n as u64 { alba::exit(1) }
                 }
                 None => {
                     println!("cat: error de lectura: {}", name);
@@ -37,7 +37,7 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8) -> ! {
         loop {
             match alba::read(0, &mut buf) {
                 Some(0) => break,
-                Some(n) => { alba::write(&buf[..n]); }
+                Some(n) => { if alba::write(&buf[..n]) != n as u64 { alba::exit(1) } }
                 None => { status = 1; break; }
             }
         }

@@ -4,53 +4,71 @@
 
 #[no_mangle]
 pub extern "C" fn _start(argc: usize, argv: *const *const u8) -> ! {
-    let mut tokens = alba::args(argc, argv);
     let mut words = [""; 8];
     let mut nargs = 0;
-    let mut specs = [""; 2];
-    let mut append = false;
+    for arg in alba::args(argc, argv) {
+        if nargs == words.len() {
+            alba::exit(1);
+        }
+        words[nargs] = arg;
+        nargs += 1;
+    }
+    alba::exit(u64::from(!run(&words[..nargs])))
+}
+
+fn run(words: &[&str]) -> bool {
+    let mut parts = words.split(|word| *word == "|");
+    let mut left = [0; 160];
+    let Some(a) = encode(parts.next().unwrap_or_default(), &mut left) else { return false };
+    let Some(words) = parts.next() else {
+        let pid = alba::syscall(27, left.as_ptr() as u64, a, 0, 0);
+        return pid != u64::MAX && alba::wait(pid) == 0;
+    };
+    let mut right = [0; 160];
+    let Some(b) = encode(words, &mut right) else { return false };
+    if parts.next().is_some() {
+        return false;
+    }
+    let pids = alba::syscall(28, left.as_ptr() as u64, a, right.as_ptr() as u64, b);
+    if pids == u64::MAX {
+        return false;
+    }
+    alba::wait(pids >> 32);
+    alba::wait(pids & u64::from(u32::MAX)) == 0
+}
+
+fn encode<'a>(words: &'a [&'a str], spec: &mut [u8; 160]) -> Option<u64> {
+    let mut tokens = words.iter().copied();
+    let mut args = [""; 8];
+    let mut nargs = 0;
+    let mut paths = [""; 2];
     while let Some(word) = tokens.next() {
         let direction = match word {
             "<" => 0,
             ">" | ">>" => 1,
-            "|" => alba::exit(1),
-            _ if nargs < words.len() => {
-                words[nargs] = word;
+            _ => {
+                *args.get_mut(nargs)? = word;
                 nargs += 1;
                 continue;
             }
-            _ => alba::exit(1),
         };
-        let Some(path) = tokens.next() else { alba::exit(1) };
-        if !specs[direction].is_empty() || matches!(path, "<" | ">" | ">>" | "|") {
-            alba::exit(1);
+        let path = tokens.next()?;
+        if !paths[direction].is_empty() || matches!(path, "<" | ">" | ">>") {
+            return None;
         }
-        specs[direction] = path;
+        paths[direction] = path;
         if direction == 1 {
-            append = word == ">>";
+            spec[0] = u8::from(word == ">>");
         }
     }
-    alba::exit(u64::from(nargs == 0 || !redirected(specs, append, &words[..nargs])))
-}
-
-fn redirected(specs: [&str; 2], append: bool, args: &[&str]) -> bool {
-    let mut spec = [0; 160];
-    spec[0] = u8::from(append);
+    if nargs == 0 {
+        return None;
+    }
     let mut len = 1;
-    for field in specs.into_iter().chain(args.iter().copied()) {
+    for field in paths.into_iter().chain(args[..nargs].iter().copied()) {
         let end = len + field.len();
-        if end >= spec.len() {
-            return false;
-        }
-        spec[len..end].copy_from_slice(field.as_bytes());
+        spec.get_mut(len..end)?.copy_from_slice(field.as_bytes());
         len = end + 1;
     }
-    let pid = alba::syscall(27, spec.as_ptr() as u64, (len - 1) as u64, 0, 0);
-    if pid == u64::MAX {
-        return false;
-    }
-    if alba::wait(pid) != 0 {
-        return false;
-    }
-    true
+    Some((len - 1) as u64)
 }
