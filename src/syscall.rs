@@ -66,11 +66,17 @@ pub fn dispatch(nr: u64, a: [u64; 5]) -> u64 {
         25 => save_text(a[0], a[1], a[2], a[3]).map_or(ERR, |_| 0),
         26 => rename(a[0], a[1], a[2], a[3]).map_or(ERR, |_| 0),
         27 => exec_io(a[0], a[1]),
+        28 => pipeline(a[0], a[1], a[2], a[3]).unwrap_or(ERR),
         _ => ERR,
     }
 }
 
 fn read(fd: u64, ptr: u64, len: u64) -> u64 {
+    if let Some(id) = sched::pipe(fd) {
+        return if fd == 0 {
+            output_slice(ptr, len).and_then(|buf| crate::pipe::read(id, buf)).map_or(ERR, |n| n as u64)
+        } else { ERR };
+    }
     if fd == 0 && sched::file(0).is_none() {
         return output_slice(ptr, len).map_or(ERR, |buf| console::read(buf) as u64);
     }
@@ -108,6 +114,13 @@ fn output_slice(ptr: u64, len: u64) -> Option<&'static mut [u8]> {
 }
 
 fn write(fd: u64, ptr: u64, len: u64) -> u64 {
+    if fd == 1 {
+        if let Some(id) = sched::pipe(fd) {
+            return copy_in(ptr, len, 4096)
+                .and_then(|data| crate::pipe::write(id, &data))
+                .map_or(ERR, |n| n as u64);
+        }
+    }
     if fd >= 3 || (fd == 1 && sched::file(1).is_some()) {
         let Some(file) = sched::file(fd) else { return ERR };
         let Some(data) = copy_in(ptr, len, 4096) else { return ERR };
@@ -223,32 +236,68 @@ fn rename(from: u64, from_len: u64, to: u64, to_len: u64) -> Option<()> {
     fs::rename(core::str::from_utf8(&from).ok()?, core::str::from_utf8(&to).ok()?)
 }
 
-// formato: modo, nombre de entrada\0, nombre de salida\0, argumentos separados por cero.
-fn exec_io(ptr: u64, len: u64) -> u64 {
-    let Some(spec) = copy_in(ptr, len, 512) else { return ERR };
-    let Some((&mode, names)) = spec.split_first() else { return ERR };
-    if mode > 1 {
-        return ERR;
-    }
-    let mut fields = names.split(|&byte| byte == 0);
-    let (Some(input), Some(output), Some(command)) = (fields.next(), fields.next(), fields.next()) else {
-        return ERR;
-    };
-    if input.len() > 39 || output.len() > 39 || command.is_empty() {
-        return ERR;
-    }
-    let (Ok(input), Ok(output), Ok(name)) = (core::str::from_utf8(input), core::str::from_utf8(output), core::str::from_utf8(command)) else {
-        return ERR;
-    };
-    let mut argv = [b"".as_slice(); 16];
-    argv[0] = command;
-    let mut argc = 1;
-    for arg in fields {
-        if argc == argv.len() {
-            return ERR;
+// formato: modo, nombres de entrada/salida y argumentos separados por cero.
+struct Command<'a> {
+    input: &'a str,
+    output: &'a str,
+    append: bool,
+    argv: [&'a [u8]; 16],
+    argc: usize,
+}
+
+impl<'a> Command<'a> {
+    fn parse(spec: &'a [u8]) -> Option<Self> {
+        let (&mode, names) = spec.split_first()?;
+        if mode > 1 { return None; }
+        let mut fields = names.split(|&byte| byte == 0);
+        let (input, output, command) = (fields.next()?, fields.next()?, fields.next()?);
+        if input.len() > 39 || output.len() > 39 || core::str::from_utf8(command).ok()?.is_empty() {
+            return None;
         }
-        argv[argc] = arg;
-        argc += 1;
+        let input = core::str::from_utf8(input).ok()?;
+        let output = core::str::from_utf8(output).ok()?;
+        let mut argv = [b"".as_slice(); 16];
+        argv[0] = command;
+        let mut argc = 1;
+        for arg in fields {
+            *argv.get_mut(argc)? = arg;
+            argc += 1;
+        }
+        Some(Self { input, output, append: mode == 1, argv, argc })
     }
-    sched::exec_redirect(name, &argv[..argc], input, output, mode == 1).map_or(ERR, |pid| pid as u64)
+
+    fn run(self, pipe: Option<(usize, usize)>) -> Option<u64> {
+        let name = core::str::from_utf8(self.argv[0]).ok()?;
+        sched::exec_redirect(name, &self.argv[..self.argc], self.input, self.output, self.append, pipe)
+            .ok().map(|pid| pid as u64)
+    }
+}
+
+fn exec_io(ptr: u64, len: u64) -> u64 {
+    copy_in(ptr, len, 512)
+        .and_then(|spec| Command::parse(&spec)?.run(None))
+        .unwrap_or(ERR)
+}
+
+fn pipeline(a: u64, alen: u64, b: u64, blen: u64) -> Option<u64> {
+    let (left, right) = (copy_in(a, alen, 512)?, copy_in(b, blen, 512)?);
+    let (left, right) = (Command::parse(&left)?, Command::parse(&right)?);
+    if !left.output.is_empty() || !right.input.is_empty()
+        || (!left.input.is_empty() && left.input == right.output)
+    {
+        return None;
+    }
+    let pipe = crate::pipe::create()?;
+    let writer = left.run(Some((pipe, 1)));
+    let reader = writer.and_then(|_| right.run(Some((pipe, 0))));
+    crate::pipe::close(pipe, 0);
+    crate::pipe::close(pipe, 1);
+    match (writer, reader) {
+        (Some(a), Some(b)) => Some((a << 32) | b),
+        (Some(a), None) => {
+            sched::wait_child(a as usize);
+            None
+        }
+        _ => None,
+    }
 }

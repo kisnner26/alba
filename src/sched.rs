@@ -104,6 +104,12 @@ pub struct OpenFile {
     pub offset: u32,
 }
 
+#[derive(Clone, Copy)]
+enum Stream {
+    File(OpenFile),
+    Pipe(usize),
+}
+
 const PROC_NAME: usize = 24;
 pub const PROC_RECORD: usize = 56;
 
@@ -120,7 +126,7 @@ struct Task {
     wake: u64,
     wait: Option<Wait>, // por que esta bloqueada
     files: [Option<OpenFile>; FILE_FDS],
-    stdio: [Option<OpenFile>; 2],
+    stdio: [Option<Stream>; 2],
     ret: u64,           // resultado que recibe al despertar de una espera
 }
 
@@ -131,6 +137,7 @@ enum Wait {
     Input,        // espera entrada de la consola
     Disk,         // espera que el disco termine una peticion
     Fs,           // espera que termine una operacion del sistema de archivos
+    Pipe(usize, usize),
     GraphicalInput, // espera teclado o tableta
     Gpu,          // espera fin de un comando de la gpu
     DiskFree,     // espera a que otra tarea libere la cola del disco
@@ -182,7 +189,7 @@ pub fn init() {
 
 // crea una tarea con su pila de kernel y un marco inicial para switch_to:
 // x19-x22 llevan datos al trampolin, x30 es la direccion donde "retorna" switch_to.
-fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>, name: &[u8], stdio: [Option<OpenFile>; 2]) -> usize {
+fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>, name: &[u8], stdio: [Option<Stream>; 2]) -> usize {
     let g = irq::save();
     let s = sched();
     let stack = pmm::alloc_pages(STACK_PAGES).expect("sin memoria para pila");
@@ -197,6 +204,11 @@ fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>, name:
     let id = s.next_id;
     s.next_id += 1;
     let ttbr = space.as_ref().map_or(mmu::kernel_ttbr(), |sp| sp.ttbr());
+    for (end, stream) in stdio.iter().enumerate() {
+        if let Some(Stream::Pipe(id)) = stream {
+            crate::pipe::acquire(*id, end);
+        }
+    }
     s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, name: proc_name(name), cpu: 0, blocks: 0, wakes: 0, wake: 0, wait: None, files: [None; FILE_FDS], stdio, ret: 0 }));
     reprogram(s);
     irq::restore(g);
@@ -213,10 +225,10 @@ pub fn spawn(f: fn()) -> usize {
 /// albafs, lo carga en un espacio de direcciones propio, deja argc/argv en su pila y crea el
 /// proceso, que arranca en EL0 en el punto de entrada del ELF
 pub fn exec_args(name: &str, args: &[&[u8]]) -> Result<usize, &'static str> {
-    exec_redirect(name, args, "", "", false)
+    exec_redirect(name, args, "", "", false, None)
 }
 
-pub fn exec_redirect(name: &str, args: &[&[u8]], input: &str, output: &str, append: bool) -> Result<usize, &'static str> {
+pub fn exec_redirect(name: &str, args: &[&[u8]], input: &str, output: &str, append: bool, pipe: Option<(usize, usize)>) -> Result<usize, &'static str> {
     let data = fs::read_exec(name)?;
     let (mut space, entry) = AddrSpace::from_elf(&data)?;
     let (sp, argc, argv) = match space.push_args(args) {
@@ -226,33 +238,36 @@ pub fn exec_redirect(name: &str, args: &[&[u8]], input: &str, output: &str, appe
             return Err(e);
         }
     };
-    let Some(stdio) = redirect(input, output, append) else {
+    let Some(mut stdio) = redirect(input, output, append) else {
         space.destroy();
         return Err("no se pudo redirigir la entrada o la salida");
     };
+    if let Some((id, end)) = pipe {
+        stdio[end] = Some(Stream::Pipe(id));
+    }
     Ok(new_task([entry, sp, argc, argv], task_user_trampoline as *const () as usize,
         Some(space), args.first().copied().unwrap_or(name.as_bytes()), stdio))
 
 }
 
-fn redirect(input: &str, output: &str, append: bool) -> Option<[Option<OpenFile>; 2]> {
+fn redirect(input: &str, output: &str, append: bool) -> Option<[Option<Stream>; 2]> {
     let mut stdio = sched().current.as_ref()?.stdio;
     let descriptor = |name| {
         Some(OpenFile { entry: core::num::NonZeroU64::new(fs::open(name)?)?, offset: 0 })
     };
     if !input.is_empty() {
-        stdio[0] = Some(descriptor(input)?);
+        stdio[0] = Some(Stream::File(descriptor(input)?));
     }
     if !output.is_empty() {
+        if input == output {
+            return None;
+        }
         if !append {
-            if input == output {
-                return None;
-            }
             fs::save_text(output, b"")?;
         } else if fs::open(output).is_none() {
             fs::create(output)?;
         }
-        stdio[1] = Some(descriptor(output)?);
+        stdio[1] = Some(Stream::File(descriptor(output)?));
     }
     Some(stdio)
 }
@@ -290,23 +305,46 @@ pub fn open_file(entry: core::num::NonZeroU64) -> Option<u64> {
 
 fn file_slot(fd: u64) -> Option<&'static mut Option<OpenFile>> {
     let task = sched().current.as_mut()?;
-    if fd < 2 {
-        return task.stdio.get_mut(fd as usize);
-    }
     let index = fd.checked_sub(FIRST_FILE_FD)? as usize;
     task.files.get_mut(index)
 }
 
 pub fn file(fd: u64) -> Option<OpenFile> {
-    *file_slot(fd)?
+    if fd >= 2 {
+        return *file_slot(fd)?;
+    }
+    match sched().current.as_ref()?.stdio[fd as usize]? {
+        Stream::File(file) => Some(file),
+        Stream::Pipe(_) => None,
+    }
+}
+
+pub fn pipe(fd: u64) -> Option<usize> {
+    match sched().current.as_ref()?.stdio.get(usize::try_from(fd).ok()?)?.as_ref()? {
+        Stream::Pipe(id) => Some(*id),
+        Stream::File(_) => None,
+    }
 }
 
 pub fn set_file_offset(fd: u64, offset: u32) -> Option<()> {
-    file_slot(fd)?.as_mut()?.offset = offset;
+    if fd < 2 {
+        let Some(Stream::File(file)) = &mut sched().current.as_mut()?.stdio[fd as usize] else {
+            return None;
+        };
+        file.offset = offset;
+    } else {
+        file_slot(fd)?.as_mut()?.offset = offset;
+    }
     Some(())
 }
 
 pub fn close_file(fd: u64) -> Option<()> {
+    if fd < 2 {
+        if let Stream::Pipe(id) = sched().current.as_mut()?.stdio[fd as usize].take()? {
+            crate::pipe::close(id, fd as usize);
+        }
+        return Some(());
+    }
     file_slot(fd)?.take().map(|_| ())
 }
 
@@ -479,6 +517,9 @@ const MAX_EXITED: usize = 32;
 /// espera, el codigo queda guardado (hasta 32) para un `wait_child` posterior.
 pub fn exit_with(code: u64) -> ! {
     irq::save();
+    for fd in 0..2 {
+        close_file(fd);
+    }
     let s = sched();
     let id = s.current.as_ref().unwrap().id;
     let mut waited = false;
@@ -568,6 +609,16 @@ pub fn wait_disk() {
 /// espera el turno para usar la cola; irq debe estar enmascarada.
 pub fn wait_disk_free() {
     wait_turn(Wait::DiskFree);
+}
+
+pub fn wait_pipe(id: usize, end: usize) {
+    wait_turn(Wait::Pipe(id, end));
+}
+
+pub fn wake_pipe(id: usize, end: usize) {
+    if wake_turn(Wait::Pipe(id, end)) {
+        NEED.store(true, Ordering::Relaxed);
+    }
 }
 
 pub fn wait_graphical_input() {

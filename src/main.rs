@@ -84,6 +84,7 @@ mod heap;
 mod input;
 mod irq;
 mod mmu;
+mod pipe;
 mod pmm;
 mod sched;
 mod syscall;
@@ -162,6 +163,7 @@ static HEAP: heap::KernelHeap = heap::KernelHeap;
 #[no_mangle]
 pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
     println!("alba 0.0.1");
+    #[cfg(feature = "autotest")]
     println!("hola desde mi propio sistema operativo");
     if fdt::is_valid(dtb) {
         println!("dtb: {:#x} ({} bytes)", dtb, fdt::total_size(dtb));
@@ -209,13 +211,13 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
     virtio::scan();
     if blk::init() {
         println!("disco: {} sectores de {} bytes", blk::sectors(), blk::SECTOR);
-        let mut sector = [0u8; blk::SECTOR];
-        if blk::read(0, &mut sector) {
-            println!("disco: sector 0 = {:?}", core::str::from_utf8(&sector[..8]).unwrap_or("?"));
-        }
-        // solo en el disco desechable de la bateria de pruebas.
+        // diagnóstico sobre el disco desechable de la batería.
         #[cfg(feature = "autotest")]
         {
+            let mut sector = [0u8; blk::SECTOR];
+            if blk::read(0, &mut sector) {
+                println!("disco: sector 0 = {:?}", core::str::from_utf8(&sector[..8]).unwrap_or("?"));
+            }
             let last = blk::sectors() - 1;
             let pattern = [0xa5u8; blk::SECTOR];
             let mut back = [0u8; blk::SECTOR];
@@ -234,9 +236,12 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
                     let x = if e.flags & fs::FLAG_EXEC != 0 { " ejecutable" } else { "" };
                     println!("  {} ({} bytes{})", e.name, e.size, x);
                 }
-                let mut text = [0; 64];
-                if let Some(n) = fs::read_named("hola.txt", 0, &mut text) {
-                    println!("hola.txt: {}", core::str::from_utf8(&text[..n]).unwrap_or("?").trim_end());
+                #[cfg(feature = "autotest")]
+                {
+                    let mut text = [0; 64];
+                    if let Some(n) = fs::read_named("hola.txt", 0, &mut text) {
+                        println!("hola.txt: {}", core::str::from_utf8(&text[..n]).unwrap_or("?").trim_end());
+                    }
                 }
             }
             Err(e) => println!("albafs: FALLO al montar: {}", e),
