@@ -104,13 +104,19 @@ pub struct OpenFile {
     pub offset: u32,
 }
 
-#[allow(dead_code)]
+const PROC_NAME: usize = 24;
+pub const PROC_RECORD: usize = 56;
+
 struct Task {
     sp: usize,
     stack: usize,  // pila del kernel; 0 = pila de arranque, no se libera
     space: Option<AddrSpace>, // espacio de direcciones de usuario; None = tarea de kernel
     ttbr: u64,     // espacio de direcciones (TTBR0 con ASID)
     id: usize,
+    name: [u8; PROC_NAME],
+    cpu: u64,
+    blocks: u32,
+    wakes: u32,
     wake: u64,
     wait: Option<Wait>, // por que esta bloqueada
     files: [Option<OpenFile>; FILE_FDS],
@@ -145,6 +151,7 @@ struct Sched {
     zombies: Vec<Box<Task>>,
     exited: Vec<(usize, u64)>, // codigos de salida que nadie ha recogido todavia
     next_id: usize,
+    switched_at: u64,
 }
 
 static mut S: Option<Sched> = None;
@@ -156,7 +163,7 @@ fn sched() -> &'static mut Sched {
 
 /// convierte el hilo de arranque en la tarea 0
 pub fn init() {
-    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, wake: 0, wait: None, files: [None; FILE_FDS], ret: 0 });
+    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, name: proc_name(b"idle"), cpu: 0, blocks: 0, wakes: 0, wake: 0, wait: None, files: [None; FILE_FDS], ret: 0 });
     unsafe {
         *addr_of_mut!(S) = Some(Sched {
             current: Some(t),
@@ -167,13 +174,14 @@ pub fn init() {
             zombies: Vec::new(),
             exited: Vec::new(),
             next_id: 1,
+            switched_at: timer::count(),
         });
     }
 }
 
 // crea una tarea con su pila de kernel y un marco inicial para switch_to:
 // x19-x22 llevan datos al trampolin, x30 es la direccion donde "retorna" switch_to.
-fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>) -> usize {
+fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>, name: &[u8]) -> usize {
     let g = irq::save();
     let s = sched();
     let stack = pmm::alloc_pages(STACK_PAGES).expect("sin memoria para pila");
@@ -188,7 +196,7 @@ fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>) -> us
     let id = s.next_id;
     s.next_id += 1;
     let ttbr = space.as_ref().map_or(mmu::kernel_ttbr(), |sp| sp.ttbr());
-    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, wake: 0, wait: None, files: [None; FILE_FDS], ret: 0 }));
+    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, name: proc_name(name), cpu: 0, blocks: 0, wakes: 0, wake: 0, wait: None, files: [None; FILE_FDS], ret: 0 }));
     reprogram(s);
     irq::restore(g);
     id
@@ -197,7 +205,7 @@ fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>) -> us
 /// tarea de kernel (solo la usa la bateria de pruebas)
 #[cfg_attr(not(feature = "autotest"), allow(dead_code))]
 pub fn spawn(f: fn()) -> usize {
-    new_task([f as usize, 0, 0, 0], task_trampoline as *const () as usize, None)
+    new_task([f as usize, 0, 0, 0], task_trampoline as *const () as usize, None, b"kernel")
 }
 
 /// ejecuta un programa del disco con argumentos (args[0] suele ser el nombre): lo lee de
@@ -213,7 +221,7 @@ pub fn exec_args(name: &str, args: &[&[u8]]) -> Result<usize, &'static str> {
             return Err(e);
         }
     };
-    Ok(new_task([entry, sp, argc, argv], task_user_trampoline as *const () as usize, Some(space)))
+    Ok(new_task([entry, sp, argc, argv], task_user_trampoline as *const () as usize, Some(space), args.first().copied().unwrap_or(name.as_bytes())))
 }
 
 /// ejecuta un programa del disco sin argumentos
@@ -315,7 +323,8 @@ fn wake_sleepers(s: &mut Sched) {
     let mut i = 0;
     while i < s.sleeping.len() {
         if s.sleeping[i].wake <= now {
-            let t = s.sleeping.swap_remove(i);
+            let mut t = s.sleeping.swap_remove(i);
+            t.wakes = t.wakes.saturating_add(1);
             s.ready.push_back(t);
         } else {
             i += 1;
@@ -343,6 +352,14 @@ fn switch_away(mode: Mode) {
         }
     };
     let mut cur = s.current.take().unwrap();
+    let now = timer::count();
+    if cur.id != 0 {
+        cur.cpu = cur.cpu.saturating_add(now.wrapping_sub(s.switched_at));
+    }
+    s.switched_at = now;
+    if matches!(mode, Mode::Sleep | Mode::Block) {
+        cur.blocks = cur.blocks.saturating_add(1);
+    }
     let old_sp: *mut usize = &mut cur.sp;
     let new_sp = next.sp;
     mmu::switch_ttbr(next.ttbr);
@@ -363,6 +380,46 @@ fn switch_away(mode: Mode) {
 
 pub fn current_id() -> usize {
     sched().current.as_ref().unwrap().id
+}
+
+fn proc_name(name: &[u8]) -> [u8; PROC_NAME] {
+    let mut result = [0; PROC_NAME];
+    let mut end = name.len().min(PROC_NAME);
+    while end > 0 && core::str::from_utf8(&name[..end]).is_err() {
+        end -= 1;
+    }
+    for (byte, &source) in result.iter_mut().zip(&name[..end]) {
+        *byte = if source.is_ascii_control() { b'?' } else { source };
+    }
+    result
+}
+
+pub fn procinfo(index: usize) -> Option<[u8; PROC_RECORD]> {
+    let g = irq::save();
+    let s = sched();
+    let record = s.current.iter().map(|t| (t, 1u8))
+        .chain(s.idle.iter().map(|t| (t, 0)))
+        .chain(s.ready.iter().map(|t| (t, 0)))
+        .chain(s.sleeping.iter().map(|t| (t, 2)))
+        .chain(s.blocked.iter().map(|t| (t, 3)))
+        .nth(index)
+        .map(|(task, state)| {
+            let live = if state == 1 && task.id != 0 {
+                timer::count().wrapping_sub(s.switched_at)
+            } else {
+                0
+            };
+            let mut record = [0; PROC_RECORD];
+            record[..8].copy_from_slice(&(task.id as u64).to_le_bytes());
+            record[8..16].copy_from_slice(&timer::counts_to_us(task.cpu.saturating_add(live)).to_le_bytes());
+            record[16..20].copy_from_slice(&task.blocks.to_le_bytes());
+            record[20..24].copy_from_slice(&task.wakes.to_le_bytes());
+            record[24] = state;
+            record[32..].copy_from_slice(&task.name);
+            record
+        });
+    irq::restore(g);
+    record
 }
 
 pub fn yield_now() {
@@ -394,6 +451,7 @@ pub fn exit_with(code: u64) -> ! {
             let mut t = s.blocked.swap_remove(i);
             t.wait = None;
             t.ret = code;
+            t.wakes = t.wakes.saturating_add(1);
             s.ready.push_back(t);
             waited = true;
         } else {
@@ -454,6 +512,7 @@ pub fn wake_input() {
         if s.blocked[i].wait == Some(Wait::Input) {
             let mut t = s.blocked.swap_remove(i);
             t.wait = None;
+            t.wakes = t.wakes.saturating_add(1);
             s.ready.push_back(t);
             NEED.store(true, Ordering::Relaxed); // que el lector corra en cuanto acabe la irq
         } else {
@@ -521,6 +580,7 @@ fn wake_turn(reason: Wait) -> bool {
         if s.blocked[i].wait == reason {
             let mut t = s.blocked.swap_remove(i);
             t.wait = None;
+            t.wakes = t.wakes.saturating_add(1);
             s.ready.push_back(t);
             woke = true;
         } else {
@@ -538,6 +598,7 @@ pub fn wake_disk() {
         if s.blocked[i].wait == Some(Wait::Disk) {
             let mut t = s.blocked.swap_remove(i);
             t.wait = None;
+            t.wakes = t.wakes.saturating_add(1);
             s.ready.push_back(t);
             NEED.store(true, Ordering::Relaxed);
         } else {

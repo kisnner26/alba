@@ -22,7 +22,7 @@ static INTERVAL: AtomicU64 = AtomicU64::new(0);
 /// interrupciones de timer atendidas desde el arranque (para medir cuanto despierta al procesador)
 static IRQS: AtomicU64 = AtomicU64::new(0);
 
-fn count() -> u64 {
+pub fn count() -> u64 {
     let c: u64;
     // isb: la lectura no puede adelantarse a instrucciones anteriores
     unsafe { asm!("isb", "mrs {}, cntpct_el0", out(reg) c) };
@@ -42,8 +42,12 @@ pub fn init(boot_start: u64) {
 /// microsegundos del contador físico desde la entrada en _start.
 pub fn micros() -> u64 {
     let elapsed = count().wrapping_sub(BOOT_START.load(Ordering::Relaxed));
+    counts_to_us(elapsed)
+}
+
+pub fn counts_to_us(counts: u64) -> u64 {
     let freq = FREQUENCY.load(Ordering::Relaxed);
-    (u128::from(elapsed) * 1_000_000 / u128::from(freq)) as u64
+    (u128::from(counts) * 1_000_000 / u128::from(freq)) as u64
 }
 
 /// tiempo desde el arranque, en ticks de 100 ms

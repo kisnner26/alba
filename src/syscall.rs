@@ -62,6 +62,7 @@ pub fn dispatch(nr: u64, a: [u64; 5]) -> u64 {
             .map_or(ERR, |addr| addr as u64),
         22 => crate::gpu::flush([a[0], a[1], a[2], a[3]]).map_or(ERR, |_| 0),
         23 => crate::input::read().unwrap_or(ERR),
+        24 => procinfo(a[0], a[1], a[2]),
         _ => ERR,
     }
 }
@@ -193,4 +194,14 @@ fn meminfo(selector: u64) -> u64 {
         _ => return ERR,
     };
     u64::from(low) | (u64::from(high) << 32)
+}
+
+fn procinfo(index: u64, ptr: u64, len: u64) -> u64 {
+    if len != sched::PROC_RECORD as u64 {
+        return ERR;
+    }
+    let Some(out) = output_slice(ptr, len) else { return ERR };
+    let Some(data) = sched::procinfo(index as usize) else { return 0 };
+    out.copy_from_slice(&data);
+    len
 }
