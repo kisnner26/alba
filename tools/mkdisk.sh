@@ -18,7 +18,7 @@ cp disk/* "$STAGE"/
 for src in user/src/bin/*.rs; do
   name=$(basename "$src" .rs)
   case "$name:${ALBA_DISK_TEST:-0}" in
-    eco:0|fdtest:0|fscorte:0|intruso:0|intruso2:0|lanzador:0|stress:0|uno:0) continue ;;
+    cmp:0|eco:0|fdtest:0|fscorte:0|intruso:0|intruso2:0|lanzador:0|stress:0|uno:0) continue ;;
   esac
   cp "user/target/$TARGET/release/$name" "$STAGE/$name"
   chmod +x "$STAGE/$name" # mkfs marca como ejecutables los archivos con permiso de ejecucion
