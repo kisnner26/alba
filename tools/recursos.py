@@ -87,7 +87,9 @@ def measure():
     result["kernel_bytes"] = KERNEL.stat().st_size
     result["disco_minimo_bytes"] = len(mkfs.build(DISK_CONTENT, 0))
     for source in sorted(PROGRAMS.glob("*.rs")):
-        result[f"programa.{source.stem}.bytes"] = (DISK_CONTENT / source.stem).stat().st_size
+        # mide también los binarios que solo se incluyen en el disco de pruebas.
+        binary = Path("user/target/aarch64-unknown-none-softfloat/release") / source.stem
+        result[f"programa.{source.stem}.bytes"] = binary.stat().st_size
     return result
 
 
