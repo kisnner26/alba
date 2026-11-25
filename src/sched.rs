@@ -124,6 +124,7 @@ enum Wait {
     Input,        // espera entrada de la consola
     Disk,         // espera que el disco termine una peticion
     Fs,           // espera que termine una operacion del sistema de archivos
+    Gpu,          // espera fin de un comando de la gpu
     DiskFree,     // espera a que otra tarea libere la cola del disco
 }
 
@@ -468,6 +469,16 @@ pub fn wait_disk_free() {
     wait_turn(Wait::DiskFree);
 }
 
+pub fn wait_gpu() {
+    wait_turn(Wait::Gpu);
+}
+
+pub fn wake_gpu() {
+    if wake_turn(Wait::Gpu) {
+        NEED.store(true, Ordering::Relaxed);
+    }
+}
+
 pub fn wait_fs() {
     wait_turn(Wait::Fs);
 }
@@ -486,19 +497,22 @@ pub fn wake_fs() {
     wake_turn(Wait::Fs);
 }
 
-fn wake_turn(reason: Wait) {
+fn wake_turn(reason: Wait) -> bool {
     let reason = Some(reason);
     let s = sched();
+    let mut woke = false;
     let mut i = 0;
     while i < s.blocked.len() {
         if s.blocked[i].wait == reason {
             let mut t = s.blocked.swap_remove(i);
             t.wait = None;
             s.ready.push_back(t);
+            woke = true;
         } else {
             i += 1;
         }
     }
+    woke
 }
 
 /// despierta a las tareas que esperan al disco (se llama desde la irq)

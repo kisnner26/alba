@@ -79,6 +79,7 @@ mod elf;
 mod fdt;
 mod fs;
 mod gic;
+mod gpu;
 mod heap;
 mod irq;
 mod mmu;
@@ -180,6 +181,7 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
         pmm::free_kib(),
         pmm::total_kib()
     );
+    #[cfg(feature = "autotest")]
     {
         use alloc::{boxed::Box, vec::Vec};
         let before = pmm::free_kib();
@@ -252,6 +254,9 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
     console::init();
 
     sched::init();
+    if gpu::init() {
+        sched::spawn(gpu::start);
+    }
 
     // bateria de pruebas: tareas de kernel, procesos de usuario y casos que el cargador debe
     // rechazar. solo con la feature autotest; el arranque normal va directo a la shell.

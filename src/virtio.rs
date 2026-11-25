@@ -7,6 +7,7 @@ const STRIDE: usize = 0x200;
 const SLOTS: usize = 32;
 const MAGIC: u32 = 0x7472_6976; // "virt"
 
+pub const ID_GPU: u32 = 16;
 pub const ID_BLOCK: u32 = 2;
 
 // registros
