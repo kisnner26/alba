@@ -37,6 +37,30 @@ pendiente para bajar más el consumo, en orden de impacto:
 4. pantalla: redibujar solo las regiones que cambian y apagar la GPU cuando nada se mueve
 5. herramienta de contabilidad de despertares por proceso
 
+## recursos
+
+línea base medida con `tools/medir.sh` en qemu 11.1.3, máquina `virt`,
+cortex-a72, tcg con `-icount shift=0,sleep=on` y 128 mib.
+
+| métrica | medida |
+|---------|--------|
+| imagen plana del kernel | 69.888 bytes |
+| disco mínimo de la imagen actual | 389.120 bytes |
+| ram reservada u ocupada al llegar a la shell | 1.998.848 bytes |
+| páginas propias de la shell | 7 de kernel y 6 de usuario |
+| arranque hasta la entrada a la shell | 101.258 µs |
+| lanzar y esperar `echo`, primera ejecución | 59 µs |
+| lanzar y esperar `echo`, segunda ejecución | 47 µs |
+| interrupciones de temporizador en un segundo de reposo | 0 |
+
+el arranque y el lanzamiento se miden con el contador físico del huésped
+bajo el reloj emulado de qemu. la ram incluye reservas de arranque, kernel y
+procesos vivos, y se cuenta en páginas físicas de 4096 bytes. la tabla por
+programa y los límites están en [tests/presupuestos.txt](tests/presupuestos.txt).
+la prueba completa falla al rebasar un límite. los límites existentes solo
+bajan si una mejora medida lo permite. estas cifras no miden vatios ni
+comparan a alba con otro sistema operativo.
+
 ## qué significa "desde cero"
 
 lo que se escribe desde cero, sin copiar ni portar código de otros proyectos:
