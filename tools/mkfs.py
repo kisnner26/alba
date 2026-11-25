@@ -6,6 +6,7 @@ uso: mkfs.py <carpeta> <disco.img> [sectores_minimos]
 import os
 import struct
 import sys
+import zlib
 
 SECTOR = 512
 ENTRY = 64
@@ -19,29 +20,32 @@ def sectors(n):
 
 def build(src, min_sectors):
     names = sorted(f for f in os.listdir(src) if os.path.isfile(os.path.join(src, f)))
+    if len(names) > 64:
+        sys.exit("albafs v2 admite hasta 64 archivos")
     for n in names:
-        if len(n.encode()) >= NAME_MAX:
+        if len(n.encode()) >= NAME_MAX or "\\" in n:
             sys.exit(f"nombre demasiado largo: {n}")
 
-    dir_sectors = max(1, sectors(len(names) * ENTRY))
-    cursor = 1 + dir_sectors  # sector 0 = superbloque, luego el directorio
+    cursor = 18  # dos copias de la cabecera y el directorio
     entries = []
     blobs = []
-    for n in names:
+    for number, n in enumerate(names, start=1):
         path = os.path.join(src, n)
         data = open(path, "rb").read()
         flags = FLAG_EXEC if os.access(path, os.X_OK) else 0
-        entries.append(struct.pack("<40sIII12x", n.encode(), cursor, len(data), flags))
+        entries.append(struct.pack("<40sIIIQ4x", n.encode(), cursor if data else 0, len(data), flags, number))
         blobs.append((cursor, data))
         cursor += sectors(len(data))
 
-    total = max(cursor, min_sectors)
+    total = max(cursor + 1, min_sectors)
     img = bytearray(total * SECTOR)
-    sb = struct.pack("<8sIIIII", b"ALBAFS01", 1, len(names), 1, dir_sectors, total)
-    img[0 : len(sb)] = sb
-    for i, e in enumerate(entries):
-        off = SECTOR + i * ENTRY
-        img[off : off + ENTRY] = e
+    directory = b"".join(entries).ljust(8 * SECTOR, b"\0")
+    header = struct.pack("<8sIIQI", b"ALBAFS02", 2, total, max(1, len(entries)), zlib.crc32(directory))
+    header += struct.pack("<I", zlib.crc32(header))
+    for bank in (0, 9):
+        off = bank * SECTOR
+        img[off : off + len(header)] = header
+        img[off + SECTOR : off + 9 * SECTOR] = directory
     for start, data in blobs:
         img[start * SECTOR : start * SECTOR + len(data)] = data
     return img
