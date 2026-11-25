@@ -7,6 +7,13 @@ alba: prueba de consola en windows
 4. en el prompt alba>, prueba help, ls, cat hola.txt y uptime.
 5. para salir de qemu, pulsa ctrl+a y luego x.
 
+para guardar la salida serie, abre una terminal en esta carpeta y ejecuta:
+
+    .\iniciar-alba.cmd --log
+
+alba.log se guarda en esta carpeta y se reemplaza al repetir el comando.
+si qemu falla antes de arrancar, copia el mensaje que aparece en la terminal.
+
 esta version emula arm64 por software en un equipo x86-64, asi que no
 usa aceleracion de hardware. es una consola experimental: todavia no hay
 escritorio grafico ni almacenamiento editable. el disco se abre en modo

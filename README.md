@@ -162,6 +162,16 @@ para salir de QEMU: `ctrl+a`, luego `x`.
 
 en la máquina de desarrollo, `make windows` genera `target/alba-windows-qemu.zip` con el kernel, el disco de prueba y un lanzador. en windows, instala [qemu de 64 bits](https://www.qemu.org/download/#windows), descomprime el zip y abre `iniciar-alba.cmd`. en la consola puedes usar `help`, `ls`, `cat hola.txt` y `uptime`; para salir, pulsa `ctrl+a` y luego `x`.
 
+el lanzador busca `qemu-system-aarch64.exe` en el `path` y en la carpeta de instalación habitual `%ProgramFiles%\qemu`. para guardar la salida de alba, abre una terminal en la carpeta extraída y ejecuta este comando.
+
+    .\iniciar-alba.cmd --log
+
+`alba.log` se guarda junto al lanzador y se reemplaza en cada ejecución con `--log`. si qemu falla antes del arranque, su mensaje de error aparece en la terminal.
+
+alba usa la uart desde la primera línea del arranque. el lanzador conecta esa uart explícitamente a la terminal y desactiva el vídeo. así puede registrar la salida sin interrumpir la entrada por teclado ni necesitar una ventana gráfica de respaldo. [opciones de consola de qemu](https://www.qemu.org/docs/master/system/invocation.html).
+
+`./tests/package.sh` genera el zip, comprueba los finales de línea de windows y prueba el arranque, `ls` y el registro con los archivos extraídos.
+
 en un equipo x86-64, qemu emula el procesador arm64 por software, sin aceleración de hardware. esta versión todavía no tiene escritorio gráfico ni archivos editables; el disco del paquete se abre en modo de solo lectura. no es un instalador de alba en el equipo físico.
 
 para probar el manejador de excepciones, compilar con la feature `crash-test`, que ejecuta una instrucción `brk` al arrancar:
