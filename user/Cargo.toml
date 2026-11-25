@@ -58,5 +58,5 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
-opt-level = 2
+opt-level = "s"
 strip = "symbols"

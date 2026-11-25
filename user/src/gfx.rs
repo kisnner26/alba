@@ -26,8 +26,12 @@ impl Canvas<'_> {
         }
     }
 
-    pub fn text(&mut self, mut x: i32, y: i32, text: &str, scale: i32, color: u32) {
-        for ch in text.bytes() {
+    pub fn text(&mut self, x: i32, y: i32, text: &str, scale: i32, color: u32) {
+        self.bytes(x, y, text.as_bytes(), scale, color);
+    }
+
+    pub fn bytes(&mut self, mut x: i32, y: i32, text: &[u8], scale: i32, color: u32) {
+        for &ch in text {
             for (row, bits) in glyph(ch).into_iter().enumerate() {
                 for col in 0..5 {
                     if bits & (16 >> col) != 0 {
@@ -43,7 +47,17 @@ impl Canvas<'_> {
 }
 
 fn glyph(ch: u8) -> [u8; 7] {
-    match ch {
+    match ch.to_ascii_lowercase() {
+        0x80 => [10, 20, 0, 22, 25, 17, 17],
+        b'u' => [0, 0, 17, 17, 17, 19, 13],
+        b'g' => [0, 0, 15, 17, 15, 1, 14],
+        b'j' => [2, 0, 6, 2, 2, 18, 12],
+        b'k' => [16, 16, 18, 20, 24, 20, 18],
+        b'p' => [0, 0, 30, 17, 30, 16, 16],
+        b'q' => [0, 0, 15, 17, 15, 1, 1],
+        b'w' => [0, 0, 17, 17, 21, 21, 10],
+        b'x' => [0, 0, 17, 10, 4, 10, 17],
+        b'z' => [0, 0, 31, 2, 4, 8, 31],
         b'a' => [0, 0, 14, 1, 15, 17, 15],
         b'b' => [16, 16, 22, 25, 17, 25, 22],
         b'c' => [0, 0, 14, 17, 16, 17, 14],
