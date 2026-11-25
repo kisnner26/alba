@@ -44,9 +44,9 @@ cortex-a72, tcg con `-icount shift=0,sleep=on`, 128 mib y consola serie.
 
 | métrica | medida |
 |---------|--------|
-| imagen plana del kernel | 69.856 bytes |
-| disco mínimo de la imagen actual | 256.512 bytes |
-| ram reservada u ocupada al llegar a la shell | 1.986.560 bytes |
+| imagen plana del kernel | 61.664 bytes |
+| disco mínimo de la imagen actual | 229.888 bytes |
+| ram reservada u ocupada al llegar a la shell | 1.978.368 bytes |
 | páginas propias de la shell | 7 de kernel y 6 de usuario |
 | arranque hasta la entrada a la shell | 105.348 µs |
 | lanzar y esperar `echo`, primera ejecución | 45 µs |
@@ -185,6 +185,12 @@ para salir de QEMU: `ctrl+a`, luego `x`.
 en la consola, `ps` muestra estado, tiempo en cpu, bloqueos y despertares por
 tarea. el tiempo usa el contador del procesador entre cambios de tarea,
 sin programar interrupciones adicionales.
+
+en la consola, `edit archivo` edita texto utf-8 de hasta 4096 bytes.
+`:ver` muestra el contenido, `:borrar` lo vacía en memoria, `:guardar`
+publica el cambio en albafs v2 y `:salir` cierra el editor. `mv` renombra
+hacia un destino libre. `files` muestra el directorio y `top` toma una
+instantánea de los procesos.
 
 ### salida gráfica en qemu
 
