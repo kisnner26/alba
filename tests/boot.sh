@@ -61,7 +61,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS01\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 14 archivos"
+  "albafs: 15 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
@@ -130,7 +130,7 @@ echo "ok: RAM dinamica verificada"
 # arranque normal (sin autotest): va directo a la shell. se teclea una sesion completa;
 # en "holx" + retroceso + "a alba" el programa leer debe recibir "hola alba"
 build
-run_qemu 10 128M 'ls\ncat hola.txt\necho uno dos\ndesconocido\nleer\nholx\x7fa alba\nuptime\nexit\n'
+run_qemu 10 128M 'ls\ncat hola.txt\necho uno dos\ndesconocido\nleer\nholx\x7fa alba\nuptime\nfdtest\nfdtest\nexit\n'
 disk_after=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$DISK")
 if [ "$DISK_BEFORE" != "$disk_after" ]; then
   echo "el arranque normal modifico el disco"; exit 1
@@ -152,6 +152,9 @@ for e in "hola desde el disco de alba" "uno dos"; do
   grep -qE "^(alba> )?$e$" "$OUT" || { echo "falta linea exacta: $e"; cat "$OUT"; exit 1; }
 done
 grep -qE "^hola.txt +28 bytes" "$OUT" || { echo "falta la linea de ls para hola.txt"; cat "$OUT"; exit 1; }
+if [ "$(grep -cF 'fdtest: limite, seek y reutilizacion correctos' "$OUT")" -ne 2 ]; then
+  echo "fallaron las pruebas de descriptores"; cat "$OUT"; exit 1
+fi
 echo "ok: shell verificada"
 
 # --- 5. energia: en reposo el timer no debe despertar al procesador ---
