@@ -45,7 +45,7 @@ cortex-a72, tcg con `-icount shift=0,sleep=on`, 128 mib y consola serie.
 | métrica | medida |
 |---------|--------|
 | imagen plana del kernel | 61.664 bytes |
-| disco mínimo de la imagen actual | 229.888 bytes |
+| disco mínimo de la imagen actual | 225.280 bytes |
 | ram reservada u ocupada al llegar a la shell | 1.978.368 bytes |
 | páginas propias de la shell | 7 de kernel y 6 de usuario |
 | arranque hasta la entrada a la shell | 105.348 µs |
@@ -201,7 +201,8 @@ gráfica comprueba la captura y un segundo de reposo sin interrupciones del
 temporizador. con `virtio-keyboard-device` y `virtio-tablet-device` el
 escritorio recibe el teclado y el puntero sin sondeo. `f2` cambia entre
 inglés y español latinoamericano. se pueden seleccionar las vistas del dock
-y arrastrar el panel por su cabecera.
+y arrastrar el panel por su cabecera. `f3` abre `notas.txt` para editar
+hasta 132 caracteres, `f4` guarda y `esc` cierra la nota.
 
 ### probar en windows con qemu
 

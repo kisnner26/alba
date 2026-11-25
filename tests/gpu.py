@@ -2,6 +2,7 @@
 """comprueba el scanout virtio-gpu con una captura real de qemu."""
 import json
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -15,11 +16,13 @@ def check(kernel, disk):
     with tempfile.TemporaryDirectory(prefix="alba-gpu-", dir="/tmp") as directory:
         control = str(Path(directory, "qmp"))
         image = Path(directory, "scanout.ppm")
+        writable = Path(directory, "escritorio.img")
+        shutil.copyfile(disk, writable)
         args = [
             "qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a72", "-m", "128M",
             "-display", "none", "-serial", "stdio", "-qmp", f"unix:{control},server=on,wait=off",
             "-global", "virtio-mmio.force-legacy=false",
-            "-drive", f"file={disk},if=none,format=raw,readonly=on,id=hd0",
+            "-drive", f"file={writable},if=none,format=raw,id=hd0",
             "-device", "virtio-blk-device,drive=hd0", "-device", "virtio-gpu-device",
             "-device", "virtio-keyboard-device", "-device", "virtio-tablet-device",
             "-kernel", kernel,
@@ -104,6 +107,15 @@ def check(kernel, disk):
                         position(18300, 14000)
                         expect(r"entrada: ventana")
                         button(False)
+                        for code in ("f3", "g", "a", "l", "f4"):
+                            execute("input-send-event", {"events": [
+                                {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": code}}}
+                                for down in (True, False)
+                            ]})
+                        expect(r"notas: guardado")
+                        qemu.stdin.write("cat notas.txt\necho fin\n")
+                        qemu.stdin.flush()
+                        expect(r"galalba>")
                         execute("quit")
                 if qemu.wait(timeout=5) != 0:
                     raise SystemExit("qemu no cerró limpiamente")

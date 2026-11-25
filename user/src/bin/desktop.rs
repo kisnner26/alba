@@ -1,4 +1,4 @@
-//! escritorio estático. dibuja una vez y entrega la región al controlador.
+//! escritorio que actualiza la pantalla al recibir eventos.
 #![no_std]
 #![no_main]
 
@@ -46,7 +46,8 @@ fn interact(c: &mut Canvas<'_>) {
     let mut redraw = false;
     let mut cursor = false;
     let mut reported = [false; 4];
-    let mut keys = [b' '; 24];
+    let mut keys = [b' '; 132];
+    let mut notes = false;
     let mut key_len = 0usize;
     let mut saved = [0u32; 36];
     loop {
@@ -61,7 +62,33 @@ fn interact(c: &mut Canvas<'_>) {
             (1, 42 | 54) => shift = val != 0,
             (1, 60) if val == 1 => {
                 spanish = !spanish;
-                panel = if spanish { "es latino" } else { "en us" };
+                if !notes {
+                    panel = if spanish { "es latino" } else { "en us" };
+                }
+                redraw = true;
+            }
+            (1, 1) if val == 1 && notes => {
+                notes = false;
+                key_len = 0;
+                panel = "archivos y consola";
+                redraw = true;
+            }
+            (1, 61) if val == 1 && !notes => {
+                notes = true;
+                key_len = load_note(&mut keys).unwrap_or_else(|| {
+                    notes = false;
+                    0
+                });
+                panel = if notes { "notas f4 guardar esc salir" } else { "nota no disponible" };
+                redraw = true;
+            }
+            (1, 62) if val == 1 && notes => {
+                if save_note(&keys[..key_len]) {
+                    panel = "nota guardada";
+                    alba::write(b"notas: guardado\n");
+                } else {
+                    panel = "error al guardar";
+                }
                 redraw = true;
             }
             (1, 272) => {
@@ -80,6 +107,9 @@ fn interact(c: &mut Canvas<'_>) {
                 if pressed && (dock..dock + 188).contains(&x)
                     && (height - 82..height - 30).contains(&y)
                 {
+                    if notes {
+                        continue; // conserva la sesión de edición hasta volver a abrir la nota.
+                    }
                     panel = if x < dock + 94 { "archivos" } else { "consola" };
                     report(&mut reported[2], "entrada: dock");
                     redraw = true;
@@ -89,11 +119,11 @@ fn interact(c: &mut Canvas<'_>) {
                 if code == 14 {
                     key_len = key_len.saturating_sub(1);
                 } else if let Some(ch) = key(code, shift, spanish) {
-                    if key_len == keys.len() {
-                        key_len = 0;
+                    let max = if notes { keys.len() } else { 24 };
+                    if key_len < max {
+                        keys[key_len] = ch;
+                        key_len += 1;
                     }
-                    keys[key_len] = ch;
-                    key_len += 1;
                 } else {
                     continue;
                 }
@@ -130,6 +160,46 @@ fn interact(c: &mut Canvas<'_>) {
             _ => {}
         }
     }
+}
+
+const NOTE: &str = "notas.txt";
+
+fn load_note(keys: &mut [u8; 132]) -> Option<usize> {
+    let Some(fd) = alba::open(NOTE) else { return Some(0) };
+    let mut raw = [0; 264];
+    let n = alba::read(fd, &mut raw);
+    let end = alba::read(fd, &mut [0; 1]);
+    alba::close(fd);
+    let raw = core::str::from_utf8(&raw[..n?]).ok()?;
+    if end != Some(0) {
+        return None;
+    }
+    let mut size = 0;
+    for ch in raw.chars() {
+        let byte = keys.get_mut(size)?;
+        *byte = match ch {
+            'ñ' | 'Ñ' => 0x80,
+            ch if ch.is_ascii() && !ch.is_ascii_control() => ch as u8,
+            _ => return None,
+        };
+        size += 1;
+    }
+    Some(size)
+}
+
+fn save_note(keys: &[u8]) -> bool {
+    let mut raw = [0; 264];
+    let mut len = 0;
+    for &key in keys {
+        if key == 0x80 {
+            raw[len..len + 2].copy_from_slice("ñ".as_bytes());
+            len += 2;
+        } else {
+            raw[len] = key;
+            len += 1;
+        }
+    }
+    alba::syscall(25, NOTE.as_ptr() as u64, NOTE.len() as u64, raw.as_ptr() as u64, len as u64) == 0
 }
 
 fn report(reported: &mut bool, message: &str) {
@@ -187,10 +257,17 @@ fn scene(c: &mut Canvas<'_>, dx: i32, dy: i32, panel: &str, keys: &[u8]) {
     c.rounded(px + 1, py + 1, pw - 2, 198, 21, 0x262e3f);
     c.rounded(px + 1, py + 1, pw - 2, 42, 20, 0x303a4f);
     c.text(px + 20, py + 17, "sistema", 1, 0xb0c0dd);
-    c.text(px + 22, py + 69, "alba", 6, 0xf2f3f9);
+    if panel.starts_with("nota") || panel == "error al guardar" {
+        c.text(px + 22, py + 65, "notas", 3, 0xf2f3f9);
+        for (row, line) in keys.chunks(44).enumerate() {
+            c.bytes(px + 23, py + 101 + row as i32 * 10, line, 1, 0x8cabef);
+        }
+    } else {
+        c.text(px + 22, py + 69, "alba", 6, 0xf2f3f9);
+        c.bytes(px + 24, py + 174, if keys.is_empty() { b"aarch64" } else { keys }, 1, 0x8cabef);
+    }
     c.text(px + 23, py + 134, panel, 1, 0xb0c0dd);
     c.rounded(px + 24, py + 156, pw - 48, 2, 1, 0x3d4a63);
-    c.bytes(px + 24, py + 174, if keys.is_empty() { b"aarch64" } else { keys }, 1, 0x8cabef);
 
     let dock_x = (w - 188) / 2;
     let dock_y = h - 82;

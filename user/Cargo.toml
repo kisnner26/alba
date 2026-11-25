@@ -60,3 +60,5 @@ panic = "abort"
 panic = "abort"
 opt-level = "s"
 strip = "symbols"
+lto = "fat"
+codegen-units = 1
