@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. nueve pruebas:
+# arranca alba en qemu y comprueba la salida. diez pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
@@ -9,6 +9,7 @@
 #   7. cache: el segundo cat no vuelve a pedir datos al disco
 #   8. persistencia: copia, borra y vuelve a arrancar con el mismo disco
 #   9. recursos: medir y comparar con los límites registrados
+#   10. virtio-gpu: validar los píxeles del scanout en una captura qmp
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -222,3 +223,6 @@ build >/dev/null 2>&1
 # --- 9. presupuestos de recursos ---
 ./tools/medir.sh --check
 echo "ok: presupuestos de recursos verificados"
+
+# --- 10. salida gráfica con el disco recién generado por medir.sh ---
+python3 tests/gpu.py "$KERNEL" "$DISK"

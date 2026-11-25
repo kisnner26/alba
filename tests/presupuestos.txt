@@ -23,5 +23,5 @@ programa.rm.bytes                             23352
 programa.sh.bytes                             29451
 programa.touch.bytes                          23369
 programa.uptime.bytes                         22445
-ram_reposo_bytes                            2098791
+ram_reposo_bytes                            2094490
 timer_reposo_irqs_por_segundo                     0
