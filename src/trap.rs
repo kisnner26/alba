@@ -156,6 +156,9 @@ pub struct Frame {
 }
 
 const EC_SVC64: u64 = 0x15;
+/// codigo de salida de un proceso que muere por un fallo (128 + 11, como una violacion de segmento):
+/// la shell y los scripts deben ver que no termino bien, no un exito falso
+const FAULT_EXIT: u64 = 139;
 
 /// excepciones sincronas que vienen de modo usuario: syscalls y fallos
 #[no_mangle]
@@ -175,7 +178,7 @@ extern "C" fn handle_sync_el0(f: &mut Frame) {
         elr,
         far
     );
-    crate::sched::exit();
+    crate::sched::exit_with(FAULT_EXIT);
 }
 
 #[no_mangle]
