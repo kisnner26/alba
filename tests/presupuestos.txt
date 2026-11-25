@@ -22,7 +22,7 @@ programa.lanzador.bytes                       13995
 programa.leer.bytes                           14314
 programa.ls.bytes                             14054
 programa.ps.bytes                             14104
-programa.redir.bytes                          14129
+programa.redir.bytes                          14028
 programa.rm.bytes                             13919
 programa.sh.bytes                             14902
 programa.touch.bytes                          13928
