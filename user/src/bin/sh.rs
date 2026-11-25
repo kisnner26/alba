@@ -10,6 +10,7 @@ const MAX_ARGS: usize = 8;
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    let boot_us = alba::clock_us();
     println!("alba shell. escribe help para ver los comandos.");
     let mut buf = [0u8; 128];
     loop {
@@ -35,6 +36,8 @@ pub extern "C" fn _start() -> ! {
 
         match words[0] {
             "exit" => break,
+            "__recursos" => measure(boot_us),
+            "__lanzamiento" => measure_launch(),
             "help" => {
                 println!("incorporados: help, exit");
                 println!("el resto son programas del disco: prueba ls");
@@ -51,4 +54,24 @@ pub extern "C" fn _start() -> ! {
         }
     }
     alba::exit(0)
+}
+
+// se ejecuta en la propia shell para medir la memoria sin cargar otro proceso.
+fn measure(boot_us: u64) {
+    let (_, kernel_used) = alba::meminfo(0).unwrap();
+    let (_, user_used) = alba::meminfo(1).unwrap();
+    let (kernel, user) = alba::meminfo(2).unwrap();
+    println!(
+        "recursos: {} {} {} {} {}",
+        boot_us, (kernel_used + user_used) as u64 * 4096, kernel, user, alba::timer_irqs(),
+    );
+}
+
+fn measure_launch() {
+    let start = alba::clock_us();
+    if let Some(pid) = alba::exec("echo", &["echo"]) {
+        if alba::wait(pid) == 0 {
+            println!("lanzamiento: {}", alba::clock_us() - start);
+        }
+    }
 }

@@ -130,6 +130,16 @@ pub fn timer_irqs() -> u64 {
     syscall(11, 0, 0, 0, 0)
 }
 
+/// en zonas 0/1 devuelve páginas libres y usadas. 2 devuelve kernel y usuario propios.
+pub fn meminfo(selector: u64) -> Option<(u32, u32)> {
+    let value = syscall(18, selector, 0, 0, 0);
+    (value != u64::MAX).then_some((value as u32, (value >> 32) as u32))
+}
+
+pub fn clock_us() -> u64 {
+    syscall(19, 0, 0, 0, 0)
+}
+
 /// peticiones enviadas al disco desde el arranque
 pub fn disk_requests() -> u64 {
     syscall(12, 0, 0, 0, 0)
