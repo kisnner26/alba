@@ -120,6 +120,7 @@ struct Task {
     wake: u64,
     wait: Option<Wait>, // por que esta bloqueada
     files: [Option<OpenFile>; FILE_FDS],
+    stdio: [Option<OpenFile>; 2],
     ret: u64,           // resultado que recibe al despertar de una espera
 }
 
@@ -163,7 +164,7 @@ fn sched() -> &'static mut Sched {
 
 /// convierte el hilo de arranque en la tarea 0
 pub fn init() {
-    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, name: proc_name(b"idle"), cpu: 0, blocks: 0, wakes: 0, wake: 0, wait: None, files: [None; FILE_FDS], ret: 0 });
+    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, name: proc_name(b"idle"), cpu: 0, blocks: 0, wakes: 0, wake: 0, wait: None, files: [None; FILE_FDS], stdio: [None; 2], ret: 0 });
     unsafe {
         *addr_of_mut!(S) = Some(Sched {
             current: Some(t),
@@ -181,7 +182,7 @@ pub fn init() {
 
 // crea una tarea con su pila de kernel y un marco inicial para switch_to:
 // x19-x22 llevan datos al trampolin, x30 es la direccion donde "retorna" switch_to.
-fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>, name: &[u8]) -> usize {
+fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>, name: &[u8], stdio: [Option<OpenFile>; 2]) -> usize {
     let g = irq::save();
     let s = sched();
     let stack = pmm::alloc_pages(STACK_PAGES).expect("sin memoria para pila");
@@ -196,7 +197,7 @@ fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>, name:
     let id = s.next_id;
     s.next_id += 1;
     let ttbr = space.as_ref().map_or(mmu::kernel_ttbr(), |sp| sp.ttbr());
-    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, name: proc_name(name), cpu: 0, blocks: 0, wakes: 0, wake: 0, wait: None, files: [None; FILE_FDS], ret: 0 }));
+    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, name: proc_name(name), cpu: 0, blocks: 0, wakes: 0, wake: 0, wait: None, files: [None; FILE_FDS], stdio, ret: 0 }));
     reprogram(s);
     irq::restore(g);
     id
@@ -205,13 +206,17 @@ fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>, name:
 /// tarea de kernel (solo la usa la bateria de pruebas)
 #[cfg_attr(not(feature = "autotest"), allow(dead_code))]
 pub fn spawn(f: fn()) -> usize {
-    new_task([f as usize, 0, 0, 0], task_trampoline as *const () as usize, None, b"kernel")
+    new_task([f as usize, 0, 0, 0], task_trampoline as *const () as usize, None, b"kernel", [None; 2])
 }
 
 /// ejecuta un programa del disco con argumentos (args[0] suele ser el nombre): lo lee de
 /// albafs, lo carga en un espacio de direcciones propio, deja argc/argv en su pila y crea el
 /// proceso, que arranca en EL0 en el punto de entrada del ELF
 pub fn exec_args(name: &str, args: &[&[u8]]) -> Result<usize, &'static str> {
+    exec_redirect(name, args, "", "", false)
+}
+
+pub fn exec_redirect(name: &str, args: &[&[u8]], input: &str, output: &str, append: bool) -> Result<usize, &'static str> {
     let data = fs::read_exec(name)?;
     let (mut space, entry) = AddrSpace::from_elf(&data)?;
     let (sp, argc, argv) = match space.push_args(args) {
@@ -221,7 +226,35 @@ pub fn exec_args(name: &str, args: &[&[u8]]) -> Result<usize, &'static str> {
             return Err(e);
         }
     };
-    Ok(new_task([entry, sp, argc, argv], task_user_trampoline as *const () as usize, Some(space), args.first().copied().unwrap_or(name.as_bytes())))
+    let Some(stdio) = redirect(input, output, append) else {
+        space.destroy();
+        return Err("no se pudo redirigir la entrada o la salida");
+    };
+    Ok(new_task([entry, sp, argc, argv], task_user_trampoline as *const () as usize,
+        Some(space), args.first().copied().unwrap_or(name.as_bytes()), stdio))
+
+}
+
+fn redirect(input: &str, output: &str, append: bool) -> Option<[Option<OpenFile>; 2]> {
+    let mut stdio = sched().current.as_ref()?.stdio;
+    let descriptor = |name| {
+        Some(OpenFile { entry: core::num::NonZeroU64::new(fs::open(name)?)?, offset: 0 })
+    };
+    if !input.is_empty() {
+        stdio[0] = Some(descriptor(input)?);
+    }
+    if !output.is_empty() {
+        if !append {
+            if input == output {
+                return None;
+            }
+            fs::save_text(output, b"")?;
+        } else if fs::open(output).is_none() {
+            fs::create(output)?;
+        }
+        stdio[1] = Some(descriptor(output)?);
+    }
+    Some(stdio)
 }
 
 /// ejecuta un programa del disco sin argumentos
@@ -256,8 +289,12 @@ pub fn open_file(entry: core::num::NonZeroU64) -> Option<u64> {
 }
 
 fn file_slot(fd: u64) -> Option<&'static mut Option<OpenFile>> {
+    let task = sched().current.as_mut()?;
+    if fd < 2 {
+        return task.stdio.get_mut(fd as usize);
+    }
     let index = fd.checked_sub(FIRST_FILE_FD)? as usize;
-    sched().current.as_mut()?.files.get_mut(index)
+    task.files.get_mut(index)
 }
 
 pub fn file(fd: u64) -> Option<OpenFile> {
