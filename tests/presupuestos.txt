@@ -9,7 +9,7 @@ proceso_kernel_paginas                            8
 proceso_usuario_paginas                           7
 programa.cat.bytes                            14146
 programa.cp.bytes                             14196
-programa.desktop.bytes                        18716
+programa.desktop.bytes                        18632
 programa.echo.bytes                           14062
 programa.eco.bytes                            13902
 programa.fdtest.bytes                         19421

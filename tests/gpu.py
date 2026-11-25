@@ -21,6 +21,7 @@ def check(kernel, disk):
             "-global", "virtio-mmio.force-legacy=false",
             "-drive", f"file={disk},if=none,format=raw,readonly=on,id=hd0",
             "-device", "virtio-blk-device,drive=hd0", "-device", "virtio-gpu-device",
+            "-device", "virtio-keyboard-device", "-device", "virtio-tablet-device",
             "-kernel", kernel,
         ]
         with subprocess.Popen(
@@ -70,6 +71,39 @@ def check(kernel, disk):
 
                         execute("qmp_capabilities")
                         execute("screendump", {"filename": str(image)})
+                        events = [
+                            {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": "a"}}}
+                            for down in (True, False)
+                        ]
+                        execute("input-send-event", {"events": events})
+                        expect(r"entrada: tecla")
+                        execute("input-send-event", {"events": [
+                            {"type": "abs", "data": {"axis": "x", "value": 20000}},
+                            {"type": "abs", "data": {"axis": "y", "value": 10000}},
+                        ]})
+                        expect(r"entrada: puntero")
+
+                        def position(x, y):
+                            execute("input-send-event", {"events": [
+                                {"type": "abs", "data": {"axis": "x", "value": x}},
+                                {"type": "abs", "data": {"axis": "y", "value": y}},
+                            ]})
+
+                        def button(down):
+                            execute("input-send-event", {"events": [
+                                {"type": "btn", "data": {"down": down, "button": "left"}},
+                            ]})
+
+                        position(15500, 30200)
+                        button(True)
+                        expect(r"entrada: dock")
+                        button(False)
+
+                        position(16000, 12200)
+                        button(True)
+                        position(18300, 14000)
+                        expect(r"entrada: ventana")
+                        button(False)
                         execute("quit")
                 if qemu.wait(timeout=5) != 0:
                     raise SystemExit("qemu no cerró limpiamente")
