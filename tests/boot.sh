@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. siete pruebas:
+# arranca alba en qemu y comprueba la salida. ocho pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
@@ -7,6 +7,7 @@
 #   5. energia: sin interrupciones de timer en reposo (kernel sin tics)
 #   6. rendimiento: lanzar programas seguidos es casi instantaneo y apenas despierta al timer
 #   7. cache: el segundo cat no vuelve a pedir datos al disco
+#   8. persistencia: copia, borra y vuelve a arrancar con el mismo disco
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -21,12 +22,14 @@ build() {
   python3 tools/mkimage.py "$ELF" "$KERNEL"
 }
 
-# run_qemu <segundos> [memoria, 128M por defecto] [entrada] [entrada2] -> deja la salida en $OUT
+# run_qemu <segundos> [memoria, 128M por defecto] [entrada] [entrada2] [conservar] -> deja la salida en $OUT
 # la entrada (formato printf %b) se envia por el UART 3 segundos despues de arrancar; la segunda,
 # si existe, 6 segundos despues de la primera
 run_qemu() {
   OUT=$(mktemp)
-  ./tools/mkdisk.sh "$DISK" >/dev/null
+  if [ "${5:-}" != conservar ]; then
+    ./tools/mkdisk.sh "$DISK" >/dev/null
+  fi
   DISK_BEFORE=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$DISK")
   local qemu=(qemu-system-aarch64 -machine virt -cpu cortex-a72 -m "${2:-128M}" -nographic
     -global virtio-mmio.force-legacy=false
@@ -59,9 +62,9 @@ expected=(
   "virtio: ranura"
   "(bloque) version 2"
   "disco: 2048 sectores de 512 bytes"
-  "disco: sector 0 = \"ALBAFS01\""
+  "disco: sector 0 = \"ALBAFS02\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 15 archivos"
+  "albafs: 18 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
@@ -196,6 +199,21 @@ if [ "${#requests[@]}" -ne 3 ] ||
   echo "se esperaba una lectura inicial y cero peticiones para el segundo cat"; cat "$OUT"; exit 1
 fi
 echo "ok: cache verificada (peticiones de disco: ${requests[*]})"
+
+# --- 8. persistencia: volver a arrancar con el mismo disco, sin regenerarlo ---
+run_qemu 7 128M 'touch borrar.txt\nrm borrar.txt\ncp hola.txt persistente.txt\ncat persistente.txt\n'
+if ! grep -qE '^(alba> )*hola desde el disco de alba$' "$OUT"; then
+  echo "no se pudo crear o leer el archivo de prueba"; cat "$OUT"; exit 1
+fi
+if grep -qE 'termino con codigo|FALLO|panic' "$OUT"; then
+  echo "error al modificar albafs"; cat "$OUT"; exit 1
+fi
+run_qemu 7 128M 'cat persistente.txt\ncat borrar.txt\n' '' conservar
+if ! grep -qE '^(alba> )*hola desde el disco de alba$' "$OUT" ||
+   ! grep -qF 'cat: no se pudo abrir: borrar.txt' "$OUT"; then
+  echo "no persistieron los cambios en albafs"; cat "$OUT"; exit 1
+fi
+echo "ok: persistencia de albafs verificada"
 
 # deja el binario normal compilado
 build >/dev/null 2>&1
