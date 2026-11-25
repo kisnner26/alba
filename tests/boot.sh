@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. catorce pruebas:
+# arranca alba en qemu y comprueba la salida. quince pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
@@ -14,6 +14,7 @@
 #   12. entradas truncadas o dañadas en los lectores elf y albafs
 #   13. diagnóstico fatal visible por serie y en el framebuffer
 #   14. corte de energía: matar qemu a mitad de escrituras y volver a montar el mismo disco
+#   15. tuberías: contrapresión, lector que cierra antes de tiempo y segundo comando inexistente
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -286,3 +287,21 @@ if [ "$completos" -lt 1 ]; then
   echo "la prueba de corte no escribio nada: ningun archivo completo en 5 cortes"; exit 1
 fi
 echo "ok: albafs sobrevive a 5 cortes abruptos ($completos archivos completos verificados)"
+
+# --- 15. tuberias: contrapresion, cierre anticipado del lector y segundo comando que falla ---
+# 1) un archivo de unos 13 KiB pasa por una tuberia de 512 bytes: el escritor se bloquea y se
+#    despierta muchas veces, y `cmp` debe decir que la copia es identica byte a byte.
+# 2) `cat ls | uno`: el lector se va tras 16 bytes; cat debe enterarse y terminar (no colgarse).
+# 3) `echo hola | noexiste`: el segundo comando no existe; el primero no puede quedar colgado.
+# en los tres casos la shell tiene que seguir viva: el echo que viene despues debe imprimirse.
+build >/dev/null 2>&1
+run_qemu 14 128M 'cat ls | cat > grande.bin\ncmp ls grande.bin\ncat ls | uno\necho despues1\necho hola | noexiste\necho despues2\n'
+copiados=$(grep -oE "cmp: iguales \([0-9]+ bytes\)" "$OUT" | grep -oE "[0-9]+" || true)
+if [ -z "$copiados" ] || [ "$copiados" -lt 8192 ]; then
+  echo "la copia por tuberia no es identica o es demasiado corta para probar la contrapresion (${copiados:-sin resultado})"
+  cat "$OUT"; exit 1
+fi
+for e in "uno: leyo 16 bytes" "despues1" "sh: redireccion invalida" "despues2"; do
+  grep -qE "^(alba> )*$e$" "$OUT" || { echo "falta tras las tuberias: $e"; cat "$OUT"; exit 1; }
+done
+echo "ok: tuberias verificadas (copia identica de $copiados bytes por una tuberia de 512, lector que cierra y comando inexistente)"
