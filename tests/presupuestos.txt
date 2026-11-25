@@ -25,6 +25,7 @@ programa.ps.bytes                             14104
 programa.redir.bytes                          14028
 programa.rm.bytes                             13919
 programa.sh.bytes                             14902
+programa.stress.bytes                         14549
 programa.touch.bytes                          13928
 programa.uptime.bytes                         13684
 ram_reposo_bytes                            2072986

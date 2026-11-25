@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. diez pruebas:
+# arranca alba en qemu y comprueba la salida. doce pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
@@ -10,6 +10,8 @@
 #   8. persistencia: copia, borra y vuelve a arrancar con el mismo disco
 #   9. recursos: medir y comparar con los límites registrados
 #   10. virtio-gpu: validar los píxeles del scanout en una captura qmp
+#   11. estabilidad: lanzar mil procesos y verificar páginas libres
+#   12. entradas truncadas o dañadas en los lectores elf y albafs
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -66,7 +68,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS02\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 23 archivos"
+  "albafs: 24 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
@@ -243,3 +245,11 @@ echo "ok: presupuestos de recursos verificados"
 
 # --- 10. salida gráfica con el disco recién generado por medir.sh ---
 python3 tests/gpu.py "$KERNEL" "$DISK"
+
+# --- 11. prueba de resistencia con los programas de la batería ---
+ALBA_DISK_TEST=1 ./tools/mkdisk.sh target/alba-soak.img >/dev/null
+python3 tests/soak.py "$KERNEL" target/alba-soak.img
+
+# --- 12. mutación de formatos en el host, con los lectores del kernel ---
+rustc --edition=2021 -O tests/fuzz.rs -o target/fuzz-formatos
+target/fuzz-formatos target/disk/hola target/alba-soak.img
