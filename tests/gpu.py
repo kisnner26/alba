@@ -20,13 +20,14 @@ def check(kernel, disk, mode="normal"):
         shutil.copyfile(disk, writable)
         args = [
             "qemu-system-aarch64", "-machine", "virt", "-cpu", "cortex-a72", "-m", "128M",
-            "-display", "none", "-serial", "stdio", "-qmp", f"unix:{control},server=on,wait=off",
+            "-accel", "tcg", "-display", "none", "-serial", "stdio", "-qmp", f"unix:{control},server=on,wait=off",
             "-global", "virtio-mmio.force-legacy=false",
             "-drive", f"file={writable},if=none,format=raw,id=hd0",
             "-device", "virtio-blk-device,drive=hd0", "-device", "virtio-gpu-device",
             "-device", "virtio-keyboard-device", "-device", "virtio-tablet-device",
             "-kernel", kernel,
         ]
+        start = time.perf_counter()
         with subprocess.Popen(
             args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True,
@@ -53,6 +54,7 @@ def check(kernel, disk, mode="normal"):
                     expect("gpu: fallo visible")
                 else:
                     expect("desktop: listo")
+                    print(f"arranque gráfico tcg: {time.perf_counter() - start:.3f} s")
                     before = timer_irqs()
                     time.sleep(1)
                     if timer_irqs() != before:
