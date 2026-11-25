@@ -71,6 +71,7 @@ macro_rules! println {
 }
 
 mod blk;
+mod cache;
 mod console;
 mod elf;
 mod fdt;
@@ -89,9 +90,11 @@ mod vm;
 
 #[cfg(feature = "autotest")]
 fn disk_concurrent() {
+    // el sector de relleno aun no esta en cache, asi se fuerza un acceso a virtio.
+    let sector = blk::sectors() - 2;
     for _ in 0..8 {
-        let mut data = [0u8; blk::SECTOR];
-        if !blk::read(0, &mut data) || &data[..8] != b"ALBAFS01" {
+        let mut data = [0xff; blk::SECTOR];
+        if !blk::read(sector, &mut data) || data != [0; blk::SECTOR] {
             println!("FALLO: lectura concurrente de disco");
             return;
         }
@@ -210,7 +213,10 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
             let last = blk::sectors() - 1;
             let pattern = [0xa5u8; blk::SECTOR];
             let mut back = [0u8; blk::SECTOR];
-            let ok = blk::write(last, &pattern) && blk::read(last, &mut back) && back == pattern;
+            let ok = blk::read(last, &mut back)
+                && blk::write(last, &pattern)
+                && blk::read(last, &mut back)
+                && back == pattern;
             println!("disco: escritura y lectura del sector {} {}", last, if ok { "ok" } else { "FALLO" });
         }
 

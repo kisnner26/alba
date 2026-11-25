@@ -10,10 +10,10 @@
 // y es cacheable: QEMU la ve coherente. en hardware real haria falta mantenimiento de cache o
 // memoria no cacheable para DMA.
 
-use crate::pmm;
+use crate::{cache::Cache, pmm};
 use crate::virtio::{self, Mmio};
 use core::ptr::{read_volatile, write_bytes, write_volatile};
-use core::sync::atomic::{fence, Ordering};
+use core::sync::atomic::{fence, AtomicU64, Ordering};
 
 pub const SECTOR: usize = 512;
 const QSIZE: usize = 8;
@@ -48,6 +48,13 @@ struct Blk {
 static mut BLK: Option<Blk> = None;
 // protegido por irq en el unico core, incluso mientras el propietario esta bloqueado.
 static mut BUSY: bool = false;
+// solo se consulta o modifica con irq enmascarada y el disco reservado o libre.
+static mut CACHE: Cache = Cache::new();
+static REQUESTS: AtomicU64 = AtomicU64::new(0);
+
+pub fn disk_requests() -> u64 {
+    REQUESTS.load(Ordering::Relaxed)
+}
 #[cfg(feature = "autotest")]
 static mut CONTENTIONS: usize = 0;
 
@@ -200,11 +207,8 @@ fn transfer(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
 
 fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
     let g = crate::irq::save();
-    let Some(b) = blk() else {
-        crate::irq::restore(g);
-        return false;
-    };
-    if sector.checked_add((len / SECTOR) as u64).is_none_or(|end| end > b.sectors) {
+    let count = (len / SECTOR) as u64;
+    if sector.checked_add(count).is_none_or(|end| end > sectors()) {
         crate::irq::restore(g);
         return false;
     }
@@ -214,7 +218,23 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
         unsafe { CONTENTIONS += 1 };
         crate::sched::wait_disk_free();
     }
+    // la cola esta libre y no se cambia de tarea durante el acceso a la cache.
+    let cache = unsafe { &mut *core::ptr::addr_of_mut!(CACHE) };
+    if kind == T_IN {
+        // el llamador entrega un bufer escribible del tamano de la peticion.
+        if cache.read(sector, unsafe { core::slice::from_raw_parts_mut(data, len) }) {
+            crate::irq::restore(g);
+            return true;
+        }
+    } else {
+        // invalidar antes de enviar cubre tambien escrituras que fallen en parte.
+        cache.invalidate(sector, count);
+    }
+    // si falta un sector, leer el rango completo mantiene el agrupamiento de virtio.
     unsafe { BUSY = true };
+    let b = blk().unwrap();
+    let irq_mode = b.irq_mode;
+    let used_idx = b.used_idx;
     let (desc, avail, used) = (b.queue + DESC_OFF, b.queue + AVAIL_OFF, b.queue + USED_OFF);
     let (hdr, status, buf) = (b.req + HDR_OFF, b.req + STATUS_OFF, b.req + DATA_OFF);
 
@@ -246,17 +266,18 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
     w16(avail + 2, b.avail_idx);
     fence(Ordering::SeqCst);
     b.mmio.write(virtio::QUEUE_NOTIFY, 0);
+    REQUESTS.fetch_add(1, Ordering::Relaxed);
 
     // fuerza el solapamiento en la prueba aunque el dispositivo responda de inmediato.
     #[cfg(feature = "autotest")]
-    if b.irq_mode {
+    if irq_mode {
         crate::sched::yield_now();
     }
 
     // esperar a que el dispositivo marque la peticion como usada
     let mut spins = 0u64;
-    while r16(used + 2) == b.used_idx {
-        if b.irq_mode {
+    while r16(used + 2) == used_idx {
+        if irq_mode {
             // la cpu duerme hasta la interrupcion de fin; se vuelve a comprobar el anillo
             // por si el despertar fue espurio
             crate::sched::wait_disk();
@@ -264,7 +285,6 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
             spins += 1;
             if spins > 50_000_000 {
                 unsafe { BUSY = false };
-                if b.irq_mode { crate::sched::wake_disk_free(); }
                 crate::irq::restore(g);
                 return false;
             }
@@ -272,14 +292,17 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
         }
     }
     fence(Ordering::SeqCst);
-    b.used_idx = b.used_idx.wrapping_add(1);
+    blk().unwrap().used_idx = used_idx.wrapping_add(1);
 
     let ok = unsafe { read_volatile(status as *const u8) } == 0;
     if ok && kind == T_IN {
-        unsafe { core::ptr::copy_nonoverlapping(buf as *const u8, data, len) };
+        // el dispositivo termino y el propietario sigue reservando el disco.
+        let bytes = unsafe { core::slice::from_raw_parts(buf as *const u8, len) };
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), data, len) };
+        unsafe { &mut *core::ptr::addr_of_mut!(CACHE) }.insert(sector, bytes);
     }
     unsafe { BUSY = false };
-    if b.irq_mode { crate::sched::wake_disk_free(); }
+    if irq_mode { crate::sched::wake_disk_free(); }
     crate::irq::restore(g);
     ok
 }
