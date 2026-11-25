@@ -62,6 +62,27 @@ pub fn read_line(buf: &mut [u8]) -> usize {
     syscall(7, 0, buf.as_mut_ptr() as u64, buf.len() as u64, 0) as usize
 }
 
+/// abre un archivo en modo lectura.
+pub fn open(name: &str) -> Option<u64> {
+    let fd = syscall(13, name.as_ptr() as u64, name.len() as u64, 0, 0);
+    (fd != u64::MAX).then_some(fd)
+}
+
+/// lee desde la posicion actual y avanza por los bytes leidos.
+pub fn read(fd: u64, buf: &mut [u8]) -> Option<usize> {
+    let n = syscall(7, fd, buf.as_mut_ptr() as u64, buf.len() as u64, 0);
+    (n != u64::MAX).then_some(n as usize)
+}
+
+/// mueve la posicion a un desplazamiento absoluto entre el comienzo y el fin.
+pub fn seek(fd: u64, offset: u64) -> bool {
+    syscall(14, fd, offset, 0, 0) != u64::MAX
+}
+
+pub fn close(fd: u64) -> bool {
+    syscall(15, fd, 0, 0, 0) == 0
+}
+
 /// lee de un archivo del disco a partir de `offset`. devuelve los bytes leidos (0 = fin) o None
 /// si el archivo no existe.
 pub fn read_file(name: &str, buf: &mut [u8], offset: u64) -> Option<usize> {

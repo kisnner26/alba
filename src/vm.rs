@@ -42,7 +42,7 @@ fn alloc_asid() -> Option<u16> {
 
 pub struct AddrSpace {
     pages: Vec<(usize, usize)>,   // (direccion fisica, paginas): todo lo que hay que liberar
-    regions: Vec<(usize, usize)>, // (direccion virtual, bytes) mapeados: para validar punteros
+    regions: Vec<(usize, usize, bool)>, // (direccion virtual, bytes, escribible) mapeados: para validar punteros
     asid: u16,
     ttbr: u64,
     stack_pa: usize, // pagina fisica mas baja de la pila de usuario
@@ -124,7 +124,7 @@ impl AddrSpace {
             for i in 0..n {
                 put(l3, first + i, desc(pa + i * PAGE, flags));
             }
-            self.regions.push((seg.vaddr, seg.memsz));
+            self.regions.push((seg.vaddr, seg.memsz, seg.flags & elf::PF_W != 0));
         }
         if !entry_ok {
             return Err("el punto de entrada no cae en un segmento ejecutable");
@@ -137,7 +137,7 @@ impl AddrSpace {
         for i in 0..STACK_PAGES {
             put(l3, first + i, desc(stack + i * PAGE, AP_EL0 | PXN | UXN));
         }
-        self.regions.push((STACK_BOTTOM, STACK_PAGES * PAGE));
+        self.regions.push((STACK_BOTTOM, STACK_PAGES * PAGE, true));
 
         unsafe { asm!("dsb ishst") }; // las tablas deben ser visibles para el recorrido de tablas
         self.ttbr = l1 as u64 | (self.asid as u64) << 48;
@@ -182,11 +182,11 @@ impl AddrSpace {
     }
 
     /// el rango [ptr, ptr+len) cae entero dentro de una region mapeada del proceso
-    pub fn contains(&self, ptr: usize, len: usize) -> bool {
+    pub fn contains(&self, ptr: usize, len: usize, write: bool) -> bool {
         let Some(end) = ptr.checked_add(len) else {
             return false;
         };
-        self.regions.iter().any(|&(start, size)| ptr >= start && end <= start + size)
+        self.regions.iter().any(|&(start, size, writable)| (!write || writable) && ptr >= start && end <= start + size)
     }
 
     /// libera tablas, paginas y ASID. no puede estar activo en este core.

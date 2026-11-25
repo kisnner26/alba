@@ -96,6 +96,16 @@ extern "C" {
 }
 
 #[allow(dead_code)]
+const FIRST_FILE_FD: u64 = 3;
+const FILE_FDS: usize = 16;
+
+#[derive(Clone, Copy)]
+pub struct OpenFile {
+    // indice + 1 para que Option<OpenFile> quepa en ocho bytes.
+    pub entry: core::num::NonZeroU16,
+    pub offset: u32,
+}
+
 struct Task {
     sp: usize,
     stack: usize,  // pila del kernel; 0 = pila de arranque, no se libera
@@ -104,6 +114,7 @@ struct Task {
     id: usize,
     wake: u64,
     wait: Option<Wait>, // por que esta bloqueada
+    files: [Option<OpenFile>; FILE_FDS],
     ret: u64,           // resultado que recibe al despertar de una espera
 }
 
@@ -143,7 +154,7 @@ fn sched() -> &'static mut Sched {
 
 /// convierte el hilo de arranque en la tarea 0
 pub fn init() {
-    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, wake: 0, wait: None, ret: 0 });
+    let t = Box::new(Task { sp: 0, stack: 0, space: None, ttbr: mmu::kernel_ttbr(), id: 0, wake: 0, wait: None, files: [None; FILE_FDS], ret: 0 });
     unsafe {
         *addr_of_mut!(S) = Some(Sched {
             current: Some(t),
@@ -175,7 +186,7 @@ fn new_task(regs: [usize; 4], trampoline: usize, space: Option<AddrSpace>) -> us
     let id = s.next_id;
     s.next_id += 1;
     let ttbr = space.as_ref().map_or(mmu::kernel_ttbr(), |sp| sp.ttbr());
-    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, wake: 0, wait: None, ret: 0 }));
+    s.ready.push_back(Box::new(Task { sp, stack, space, ttbr, id, wake: 0, wait: None, files: [None; FILE_FDS], ret: 0 }));
     reprogram(s);
     irq::restore(g);
     id
@@ -213,12 +224,37 @@ pub fn exec(name: &str) -> Result<usize, &'static str> {
 }
 
 /// el rango de usuario cae dentro de una region mapeada del proceso actual
-pub fn user_range_ok(ptr: u64, len: u64) -> bool {
+pub fn user_range_ok(ptr: u64, len: u64, write: bool) -> bool {
     sched()
         .current
         .as_ref()
         .and_then(|t| t.space.as_ref())
-        .is_some_and(|sp| sp.contains(ptr as usize, len as usize))
+        .is_some_and(|sp| sp.contains(ptr as usize, len as usize, write))
+}
+
+pub fn open_file(entry: core::num::NonZeroU16) -> Option<u64> {
+    let files = &mut sched().current.as_mut()?.files;
+    let index = files.iter().position(Option::is_none)?;
+    files[index] = Some(OpenFile { entry, offset: 0 });
+    Some(FIRST_FILE_FD + index as u64)
+}
+
+fn file_slot(fd: u64) -> Option<&'static mut Option<OpenFile>> {
+    let index = fd.checked_sub(FIRST_FILE_FD)? as usize;
+    sched().current.as_mut()?.files.get_mut(index)
+}
+
+pub fn file(fd: u64) -> Option<OpenFile> {
+    *file_slot(fd)?
+}
+
+pub fn set_file_offset(fd: u64, offset: u32) -> Option<()> {
+    file_slot(fd)?.as_mut()?.offset = offset;
+    Some(())
+}
+
+pub fn close_file(fd: u64) -> Option<()> {
+    file_slot(fd)?.take().map(|_| ())
 }
 
 #[no_mangle]

@@ -85,3 +85,36 @@ pub fn read(name: &str) -> Option<Vec<u8>> {
     data.truncate(size);
     Some(data)
 }
+
+/// lee solo los sectores que cubren el rango, agrupando los sectores completos.
+pub fn read_at(entry: &Entry, offset: u64, out: &mut [u8]) -> Option<usize> {
+    let count = out.len().min((entry.size as u64).saturating_sub(offset) as usize);
+    if count == 0 {
+        return Some(0);
+    }
+    let mut sector = entry.start as u64 + offset / SECTOR as u64;
+    let skip = offset as usize % SECTOR;
+    let mut tail = &mut out[..count];
+    let mut scratch = [0; SECTOR];
+    if skip != 0 {
+        let n = tail.len().min(SECTOR - skip);
+        if !blk::read(sector, &mut scratch) {
+            return None;
+        }
+        tail[..n].copy_from_slice(&scratch[skip..skip + n]);
+        tail = &mut tail[n..];
+        sector += 1;
+    }
+    let full = tail.len() / SECTOR * SECTOR;
+    if full != 0 && !blk::read_sectors(sector, &mut tail[..full]) {
+        return None;
+    }
+    if full != tail.len() {
+        if !blk::read(sector + (full / SECTOR) as u64, &mut scratch) {
+            return None;
+        }
+        let partial = &mut tail[full..];
+        partial.copy_from_slice(&scratch[..partial.len()]);
+    }
+    Some(count)
+}
