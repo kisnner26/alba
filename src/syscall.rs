@@ -55,6 +55,12 @@ pub fn dispatch(nr: u64, a: [u64; 5]) -> u64 {
         17 => name_op(a[0], a[1], fs::unlink),
         18 => meminfo(a[0]),
         19 => crate::timer::micros(),
+        20 => crate::gpu::framebuffer()
+            .map_or(ERR, |fb| (u64::from(fb.width) << 32) | u64::from(fb.height)),
+        21 => crate::gpu::framebuffer()
+            .and_then(|fb| sched::map_framebuffer(fb.addr, (fb.width * fb.height * 4) as usize))
+            .map_or(ERR, |addr| addr as u64),
+        22 => crate::gpu::flush([a[0], a[1], a[2], a[3]]).map_or(ERR, |_| 0),
         _ => ERR,
     }
 }

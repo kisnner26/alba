@@ -18,6 +18,37 @@ struct Gpu {
 
 static mut GPU: Option<Gpu> = None;
 
+#[derive(Clone, Copy)]
+pub struct Framebuffer {
+    pub addr: usize,
+    pub width: u32,
+    pub height: u32,
+}
+
+static mut FB: Option<(usize, Framebuffer)> = None;
+
+// solo el proceso inicial del escritorio recibe acceso a las páginas de dma.
+pub fn framebuffer() -> Option<Framebuffer> {
+    let g = irq::save();
+    let pid = sched::current_id();
+    // se publica con irq enmascarada; ninguna referencia sobrevive a la consulta.
+    let fb = unsafe { addr_of!(FB).read() }.filter(|(owner, _)| *owner == pid).map(|(_, fb)| fb);
+    irq::restore(g);
+    fb
+}
+
+pub fn flush(rect: [u64; 4]) -> Option<()> {
+    let fb = framebuffer()?;
+    let [x, y, w, h] = rect;
+    if x.checked_add(w)? > u64::from(fb.width) || y.checked_add(h)? > u64::from(fb.height) {
+        return None;
+    }
+    if w == 0 || h == 0 {
+        return Some(());
+    }
+    device()?.damage(fb.width, [x as u32, y as u32, w as u32, h as u32])
+}
+
 #[inline(never)]
 pub fn init() -> bool {
     let Some(mmio) = virtio::find(virtio::ID_GPU) else { return false };
@@ -80,6 +111,16 @@ pub fn irq(id: u32) -> bool {
 }
 
 impl Gpu {
+    fn damage(&self, stride: u32, [x, y, w, h]: [u32; 4]) -> Option<()> {
+        let offset = (y * stride + x) * 4;
+        if self.command(0x105, &[x, y, w, h, offset, 0, 1, 0]) != OK
+            || self.command(0x104, &[x, y, w, h, 1, 0]) != OK
+        {
+            return None;
+        }
+        Some(())
+    }
+
     #[inline(never)]
     fn command(&self, kind: u32, body: &[u32]) -> u32 {
         let p = self.page;
@@ -148,6 +189,8 @@ fn draw_test_pattern() -> Option<()> {
     let bytes = width * height * 4;
     let buffer = pmm::alloc_pages((bytes as usize).div_ceil(pmm::PAGE))?;
     // el buffer aún no se ha expuesto a la gpu. el patrón identifica dos regiones del scanout.
+    // las páginas completas se exponen a usuario, incluido el relleno de la última.
+    unsafe { core::ptr::write_bytes(buffer as *mut u8, 0, (bytes as usize).div_ceil(pmm::PAGE) * pmm::PAGE) };
     let pixels = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u32, (bytes / 4) as usize) };
     for (y, row) in pixels.chunks_exact_mut(width as usize).enumerate() {
         row.fill(if y < 32 { 0x001e2c42 } else { 0x00121927 });
@@ -156,8 +199,7 @@ fn draw_test_pattern() -> Option<()> {
     if gpu.command(0x101, &[1, 2, width, height]) != OK
         || gpu.command(0x106, &[1, 1, lo, hi, bytes, 0]) != OK
         || gpu.command(0x103, &[0, 0, width, height, scanout as u32, 1]) != OK
-        || gpu.command(0x105, &[0, 0, width, height, 0, 0, 1, 0]) != OK
-        || gpu.command(0x104, &[0, 0, width, height, 1, 0]) != OK
+        || gpu.damage(width, [0, 0, width, height]).is_none()
     {
         // detener el dispositivo antes de devolver páginas que pudo conservar por dma.
         gpu.mmio.write(virtio::STATUS, 0);
@@ -167,5 +209,11 @@ fn draw_test_pattern() -> Option<()> {
         return None;
     }
     crate::println!("gpu: scanout {}x{}", width, height);
+    let masked = irq::save();
+    if let Ok(pid) = sched::exec("desktop") {
+        // el proceso nuevo todavía no ha podido correr en este core.
+        unsafe { addr_of_mut!(FB).write(Some((pid, Framebuffer { addr: buffer, width, height }))) };
+    }
+    irq::restore(masked);
     Some(())
 }

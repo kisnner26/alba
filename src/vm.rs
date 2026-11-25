@@ -181,6 +181,34 @@ impl AddrSpace {
         self.ttbr
     }
 
+    pub fn map_framebuffer(&mut self, addr: usize, bytes: usize) -> Option<usize> {
+        const FB_VA: usize = CODE_VA + 512 * PAGE;
+        if self.regions.iter().any(|&(va, _, _)| va == FB_VA) {
+            return Some(FB_VA);
+        }
+        let pages = bytes.div_ceil(PAGE);
+        let count = pages.div_ceil(512);
+        if !(1..=2).contains(&count) || addr % PAGE != 0 {
+            return None;
+        }
+        let tables = self.alloc(Zone::Kernel, count).ok()?;
+        let l1 = (self.ttbr & 0x0000_ffff_ffff_f000) as usize;
+        // la entrada dos fue instalada por build y apunta a nuestro propio l2.
+        let l2 = unsafe { ((l1 as *const u64).add(2).read() & !0xfff) as usize };
+        for page in 0..pages {
+            put(tables + (page / 512) * PAGE, page % 512,
+                desc(addr + page * PAGE, AP_EL0 | PXN | UXN));
+        }
+        unsafe { asm!("dsb ishst") };
+        for table in 0..count {
+            put(l2, 1 + table, (tables + table * PAGE) as u64 | TABLE);
+        }
+        // las entradas de esta ventana eran inválidas y no se reutilizan.
+        unsafe { asm!("dsb ishst", "isb") };
+        self.regions.push((FB_VA, bytes, true));
+        Some(FB_VA)
+    }
+
     /// páginas propias del proceso. las tablas compartidas no se cuentan.
     pub fn page_counts(&self) -> (u32, u32) {
         let mut kernel = 0;

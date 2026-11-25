@@ -229,6 +229,10 @@ pub fn user_range_ok(ptr: u64, len: u64, write: bool) -> bool {
         .is_some_and(|sp| sp.contains(ptr as usize, len as usize, write))
 }
 
+pub fn map_framebuffer(addr: usize, bytes: usize) -> Option<usize> {
+    sched().current.as_mut()?.space.as_mut()?.map_framebuffer(addr, bytes)
+}
+
 pub fn current_page_counts() -> (u32, u32) {
     let task = sched().current.as_ref().unwrap();
     let (tables, user) = task.space.as_ref().map_or((0, 0), AddrSpace::page_counts);
