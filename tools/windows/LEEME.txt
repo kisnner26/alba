@@ -1,20 +1,26 @@
-alba: prueba de consola en windows
+alba v0.1 | prueba en la dell con qemu
 
-1. instala qemu de 64 bits: https://www.qemu.org/download/#windows
-2. descomprime todos los archivos en una misma carpeta.
-3. abre iniciar-alba.cmd. si qemu no aparece, agrega su carpeta al path
-   o instalalo en la ubicacion predeterminada de program files.
-4. en el prompt alba>, prueba help, ls, cat hola.txt y uptime.
-5. para salir de qemu, pulsa ctrl+a y luego x.
+1. instala qemu para windows de 64 bits: https://www.qemu.org/download/#windows
+2. descomprime el zip completo en una carpeta donde puedas escribir.
+3. abre iniciar-alba.cmd con doble clic. se crea alba-disk.img la primera vez.
+4. en el escritorio, mueve el puntero, pulsa el dock y arrastra el panel.
+5. pulsa f3 para abrir notas.txt. escribe algo, guarda con f4 y sal con esc.
+6. en la consola de qemu, prueba help, ls, cat notas.txt, ps y uptime.
+7. cierra con ctrl+a y luego x en la consola. abre iniciar-alba.cmd otra vez
+   y comprueba que cat notas.txt conserva el texto.
 
-para guardar la salida serie, abre una terminal en esta carpeta y ejecuta:
+qemu elige su ventana sdl si esta disponible, o gtk. si no tiene esos
+controladores usa la consola. para forzar la consola desde windows:
 
-    .\iniciar-alba.cmd --log
+    .\iniciar-alba.cmd --console
 
-alba.log se guarda en esta carpeta y se reemplaza al repetir el comando.
-si qemu falla antes de arrancar, copia el mensaje que aparece en la terminal.
+alba-fabrica.img es la copia de fabrica. cerrar qemu y ejecutar
+restaurar-disco.cmd permite reemplazar alba-disk.img con esa copia.
+la restauracion elimina todos los archivos creados dentro de alba.
 
-esta version emula arm64 por software en un equipo x86-64, asi que no
-usa aceleracion de hardware. es una consola experimental: todavia no hay
-escritorio grafico ni almacenamiento editable. el disco se abre en modo
-solo lectura. no es un instalador ni modifica el sistema de windows.
+alba.log contiene la salida serie de la ultima ejecucion. si falla,
+guarda una copia de ese archivo antes de volver a abrir alba y agrega
+el comando o accion que causo el problema. si qemu falla antes de
+iniciar el kernel, copia tambien el mensaje de la ventana de consola.
+
+la dell x86-64 emula un equipo arm64 con tcg. se necesita qemu instalado.

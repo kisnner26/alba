@@ -48,7 +48,7 @@ cortex-a72, tcg con `-icount shift=0,sleep=on`, 128 mib y consola serie.
 | disco mínimo de la imagen actual | 225.280 bytes |
 | ram reservada u ocupada al llegar a la shell | 1.974.272 bytes |
 | páginas propias de la shell | 7 de kernel y 6 de usuario |
-| arranque hasta la entrada a la shell | 105.348 µs |
+| arranque hasta la entrada a la shell | 2.352 µs |
 | lanzar y esperar `echo`, primera ejecución | 45 µs |
 | lanzar y esperar `echo`, segunda ejecución | 37 µs |
 | interrupciones de temporizador en un segundo de reposo | 0 |
@@ -215,21 +215,25 @@ registros de diagnóstico. con el framebuffer activo y la cola de la gpu
 libre, el fallo también aparece en pantalla. `make soak` ejecuta la prueba
 opcional de resistencia durante 30 minutos.
 
-### probar en windows con qemu
+### probar el paquete v0.1 en windows con qemu
 
-en la máquina de desarrollo, `make windows` genera `target/alba-windows-qemu.zip` con el kernel, el disco de prueba y un lanzador. en windows, instala [qemu de 64 bits](https://www.qemu.org/download/#windows), descomprime el zip y abre `iniciar-alba.cmd`. en la consola puedes usar `help`, `ls`, `cat hola.txt` y `uptime`; para salir, pulsa `ctrl+a` y luego `x`.
+`make windows` genera `target/alba-v0.1-windows-qemu.zip`. instala
+[qemu de 64 bits](https://www.qemu.org/download/#windows), extrae todo
+en una carpeta escribible y abre `iniciar-alba.cmd`. el lanzador elige
+sdl o gtk cuando están disponibles y admite `--console` para usar solo
+la consola serie. el archivo `alba.log` guarda la salida más reciente.
 
-el lanzador busca `qemu-system-aarch64.exe` en el `path` y en la carpeta de instalación habitual `%ProgramFiles%\qemu`. para guardar la salida de alba, abre una terminal en la carpeta extraída y ejecuta este comando.
+la primera ejecución crea el disco escribible `alba-disk.img`. con qemu
+cerrado, `restaurar-disco.cmd` pide confirmación y reemplaza ese disco
+con la copia de fábrica. se pierde el contenido guardado en alba al
+restaurar. `LEEME.txt` incluye el recorrido de prueba y qué adjuntar
+si aparece un fallo.
 
-    .\iniciar-alba.cmd --log
-
-`alba.log` se guarda junto al lanzador y se reemplaza en cada ejecución con `--log`. si qemu falla antes del arranque, su mensaje de error aparece en la terminal.
-
-alba usa la uart desde la primera línea del arranque. el lanzador conecta esa uart explícitamente a la terminal y desactiva el vídeo. así puede registrar la salida sin interrumpir la entrada por teclado ni necesitar una ventana gráfica de respaldo. [opciones de consola de qemu](https://www.qemu.org/docs/master/system/invocation.html).
-
-`./tests/package.sh` genera el zip, comprueba los finales de línea de windows y prueba el arranque, `ls` y el registro con los archivos extraídos.
-
-en un equipo x86-64, qemu emula el procesador arm64 por software, sin aceleración de hardware. el lanzador de este paquete abre la consola serie y monta el disco en modo de solo lectura.
+`./tests/package.sh` comprueba el zip extraído en qemu. en macos arm64,
+con qemu 11.1.3, tcg y salida sin ventana, se midieron **0,043–0,065 s** hasta la shell y
+**0,057 s** hasta el escritorio. se midió con reloj de pared desde el
+lanzamiento de qemu hasta la salida serie correspondiente. queda por
+medir y validar el lanzador en la dell con windows x86-64.
 
 para probar el manejador de excepciones, compilar con la feature `crash-test`, que ejecuta una instrucción `brk` al arrancar:
 
