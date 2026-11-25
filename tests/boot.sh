@@ -49,7 +49,8 @@ run_qemu() {
   fi
   local pid=$!
   sleep "$1"
-  kill "$pid" 2>/dev/null || true
+  # ALBA_KILL_SIGNAL=KILL mata qemu de golpe, como un corte de energia
+  kill -"${ALBA_KILL_SIGNAL:-TERM}" "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   # la salida serie termina las lineas con \r\n: se normaliza para poder comparar lineas enteras
   tr -d '\r' <"$OUT" >"$OUT.lf" && mv "$OUT.lf" "$OUT"
