@@ -88,6 +88,18 @@ mod virtio;
 mod vm;
 
 #[cfg(feature = "autotest")]
+fn disk_concurrent() {
+    for _ in 0..8 {
+        let mut data = [0u8; blk::SECTOR];
+        if !blk::read(0, &mut data) || &data[..8] != b"ALBAFS01" {
+            println!("FALLO: lectura concurrente de disco");
+            return;
+        }
+    }
+    println!("disco concurrente: lecturas correctas, esperas={}", blk::contentions());
+}
+
+#[cfg(feature = "autotest")]
 fn demo_a() {
     for i in 1..=4 {
         println!("[a] paso {}", i);
@@ -233,6 +245,8 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
     // rechazar. solo con la feature autotest; el arranque normal va directo a la shell.
     #[cfg(feature = "autotest")]
     {
+        sched::spawn(disk_concurrent);
+        sched::spawn(disk_concurrent);
         sched::spawn(demo_a);
         sched::spawn(demo_b);
         sched::spawn(demo_busy_1);

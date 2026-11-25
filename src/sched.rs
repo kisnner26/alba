@@ -113,6 +113,7 @@ enum Wait {
     Child(usize), // espera a que termine el proceso con ese id
     Input,        // espera entrada de la consola
     Disk,         // espera que el disco termine una peticion
+    DiskFree,     // espera a que otra tarea libere la cola del disco
 }
 
 enum Mode {
@@ -422,6 +423,27 @@ pub fn wake_input() {
 pub fn wait_disk() {
     sched().current.as_mut().unwrap().wait = Some(Wait::Disk);
     switch_away(Mode::Block);
+}
+
+/// espera el turno para usar la cola; irq debe estar enmascarada.
+pub fn wait_disk_free() {
+    sched().current.as_mut().unwrap().wait = Some(Wait::DiskFree);
+    switch_away(Mode::Block);
+}
+
+/// despierta a quienes esperan el turno; irq debe estar enmascarada.
+pub fn wake_disk_free() {
+    let s = sched();
+    let mut i = 0;
+    while i < s.blocked.len() {
+        if s.blocked[i].wait == Some(Wait::DiskFree) {
+            let mut t = s.blocked.swap_remove(i);
+            t.wait = None;
+            s.ready.push_back(t);
+        } else {
+            i += 1;
+        }
+    }
 }
 
 /// despierta a las tareas que esperan al disco (se llama desde la irq)

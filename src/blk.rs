@@ -46,6 +46,18 @@ struct Blk {
 }
 
 static mut BLK: Option<Blk> = None;
+// protegido por irq en el unico core, incluso mientras el propietario esta bloqueado.
+static mut BUSY: bool = false;
+#[cfg(feature = "autotest")]
+static mut CONTENTIONS: usize = 0;
+
+#[cfg(feature = "autotest")]
+pub fn contentions() -> usize {
+    let g = crate::irq::save();
+    let count = unsafe { CONTENTIONS };
+    crate::irq::restore(g);
+    count
+}
 
 fn blk() -> Option<&'static mut Blk> {
     unsafe { (*core::ptr::addr_of_mut!(BLK)).as_mut() }
@@ -187,15 +199,22 @@ fn transfer(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
 }
 
 fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
+    let g = crate::irq::save();
     let Some(b) = blk() else {
+        crate::irq::restore(g);
         return false;
     };
-    if sector + (len / SECTOR) as u64 > b.sectors {
+    if sector.checked_add((len / SECTOR) as u64).is_none_or(|end| end > b.sectors) {
+        crate::irq::restore(g);
         return false;
     }
-    // una peticion a la vez: ninguna otra tarea puede entrar en medio. las interrupciones
-    // quedan enmascaradas; si hay que esperar, la tarea se bloquea y otras corren.
-    let g = crate::irq::save();
+    // enmascarar irq no basta: wait_disk cambia de tarea mientras la peticion sigue activa.
+    while unsafe { BUSY } {
+        #[cfg(feature = "autotest")]
+        unsafe { CONTENTIONS += 1 };
+        crate::sched::wait_disk_free();
+    }
+    unsafe { BUSY = true };
     let (desc, avail, used) = (b.queue + DESC_OFF, b.queue + AVAIL_OFF, b.queue + USED_OFF);
     let (hdr, status, buf) = (b.req + HDR_OFF, b.req + STATUS_OFF, b.req + DATA_OFF);
 
@@ -228,6 +247,12 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
     fence(Ordering::SeqCst);
     b.mmio.write(virtio::QUEUE_NOTIFY, 0);
 
+    // fuerza el solapamiento en la prueba aunque el dispositivo responda de inmediato.
+    #[cfg(feature = "autotest")]
+    if b.irq_mode {
+        crate::sched::yield_now();
+    }
+
     // esperar a que el dispositivo marque la peticion como usada
     let mut spins = 0u64;
     while r16(used + 2) == b.used_idx {
@@ -238,6 +263,8 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
         } else {
             spins += 1;
             if spins > 50_000_000 {
+                unsafe { BUSY = false };
+                if b.irq_mode { crate::sched::wake_disk_free(); }
                 crate::irq::restore(g);
                 return false;
             }
@@ -251,6 +278,8 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
     if ok && kind == T_IN {
         unsafe { core::ptr::copy_nonoverlapping(buf as *const u8, data, len) };
     }
+    unsafe { BUSY = false };
+    if b.irq_mode { crate::sched::wake_disk_free(); }
     crate::irq::restore(g);
     ok
 }

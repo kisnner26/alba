@@ -90,6 +90,9 @@ expected=(
 for e in "${expected[@]}"; do
   grep -qF -- "$e" "$OUT" || { echo "falta: $e"; fail=1; }
 done
+if [ "$(grep -cE 'disco concurrente: lecturas correctas, esperas=[1-9][0-9]*' "$OUT")" -ne 2 ]; then
+  echo "fallo la prueba de lecturas concurrentes del disco"; cat "$OUT"; exit 1
+fi
 if grep -qE "excepcion|panic|ERROR|FALLO" "$OUT"; then
   echo "la salida contiene una excepcion, panic, ERROR o FALLO"
   fail=1
