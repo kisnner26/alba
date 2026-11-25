@@ -40,17 +40,17 @@ pendiente para bajar más el consumo, en orden de impacto:
 ## recursos
 
 línea base medida con `tools/medir.sh` en qemu 11.1.3, máquina `virt`,
-cortex-a72, tcg con `-icount shift=0,sleep=on` y 128 mib.
+cortex-a72, tcg con `-icount shift=0,sleep=on`, 128 mib y consola serie.
 
 | métrica | medida |
 |---------|--------|
-| imagen plana del kernel | 69.888 bytes |
-| disco mínimo de la imagen actual | 389.120 bytes |
-| ram reservada u ocupada al llegar a la shell | 1.998.848 bytes |
+| imagen plana del kernel | 69.848 bytes |
+| disco mínimo de la imagen actual | 259.584 bytes |
+| ram reservada u ocupada al llegar a la shell | 1.986.560 bytes |
 | páginas propias de la shell | 7 de kernel y 6 de usuario |
-| arranque hasta la entrada a la shell | 101.258 µs |
-| lanzar y esperar `echo`, primera ejecución | 59 µs |
-| lanzar y esperar `echo`, segunda ejecución | 47 µs |
+| arranque hasta la entrada a la shell | 105.348 µs |
+| lanzar y esperar `echo`, primera ejecución | 45 µs |
+| lanzar y esperar `echo`, segunda ejecución | 37 µs |
 | interrupciones de temporizador en un segundo de reposo | 0 |
 
 el arranque y el lanzamiento se miden con el contador físico del huésped
@@ -182,6 +182,14 @@ ejecutar:
 
 para salir de QEMU: `ctrl+a`, luego `x`.
 
+### salida gráfica en qemu
+
+alba carga el escritorio si qemu presenta `virtio-gpu-device`. la consola
+serie sigue disponible. el escritorio dibuja desde el espacio de usuario
+sobre un framebuffer propio y refresca solo la región que indica. la prueba
+gráfica comprueba la captura y un segundo de reposo sin interrupciones del
+temporizador.
+
 ### probar en windows con qemu
 
 en la máquina de desarrollo, `make windows` genera `target/alba-windows-qemu.zip` con el kernel, el disco de prueba y un lanzador. en windows, instala [qemu de 64 bits](https://www.qemu.org/download/#windows), descomprime el zip y abre `iniciar-alba.cmd`. en la consola puedes usar `help`, `ls`, `cat hola.txt` y `uptime`; para salir, pulsa `ctrl+a` y luego `x`.
@@ -196,7 +204,7 @@ alba usa la uart desde la primera línea del arranque. el lanzador conecta esa u
 
 `./tests/package.sh` genera el zip, comprueba los finales de línea de windows y prueba el arranque, `ls` y el registro con los archivos extraídos.
 
-en un equipo x86-64, qemu emula el procesador arm64 por software, sin aceleración de hardware. esta versión todavía no tiene escritorio gráfico ni archivos editables; el disco del paquete se abre en modo de solo lectura. no es un instalador de alba en el equipo físico.
+en un equipo x86-64, qemu emula el procesador arm64 por software, sin aceleración de hardware. el lanzador de este paquete abre la consola serie y monta el disco en modo de solo lectura.
 
 para probar el manejador de excepciones, compilar con la feature `crash-test`, que ejecuta una instrucción `brk` al arrancar:
 
