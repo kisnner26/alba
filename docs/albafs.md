@@ -43,7 +43,7 @@ lee los archivos de `disk/` (los que tengan permiso de ejecución quedan marcado
 ## límites conocidos
 
 - sin carpetas, sin permisos más allá de la bandera de ejecución
-- archivos contiguos: crear o crecer un archivo obliga a reescribir el disco; la escritura desde el kernel llegará con una versión 2 con asignación por extensiones
+- en v1, crear o crecer un archivo obliga a regenerar la imagen
 
 ## versión 2, especificación
 
@@ -65,7 +65,7 @@ máximo. el disco v2 contiene dos copias de los metadatos en posiciones fijas.
 | 0 | 8 | magia `ALBAFS02` |
 | 8 | 4 | versión (2) |
 | 12 | 4 | sectores totales |
-| 16 | 8 | generación de la copia (empieza en 1) |
+| 16 | 8 | generación de la copia (al menos 1) |
 | 24 | 4 | crc-32 ieee de los ocho sectores de directorio |
 | 28 | 4 | crc-32 ieee de los primeros 28 bytes de esta cabecera |
 | 32 | 480 | reservado, en cero |
@@ -73,7 +73,9 @@ máximo. el disco v2 contiene dos copias de los metadatos en posiciones fijas.
 el directorio conserva el tamaño y los primeros 52 bytes de las entradas v1.
 los bytes 52–59 contienen el identificador del archivo, distinto de cero, y los
 bytes 60–63 se reservan en cero. una entrada libre tiene los 64 bytes en cero.
-cada archivo nuevo recibe la generación del commit que lo creó. el identificador
+el formateador numera los archivos iniciales desde 1 y comienza en esa última
+generación, o en 1 para un directorio vacío. cada archivo nuevo recibe la
+generación del commit que lo creó. el identificador
 se conserva al anexar y evita que un descriptor abierto apunte a un archivo
 nuevo tras borrar el anterior. los archivos vacíos llevan sector de inicio cero.
 
