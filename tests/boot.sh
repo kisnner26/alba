@@ -138,7 +138,7 @@ echo "ok: RAM dinamica verificada"
 # arranque normal (sin autotest): va directo a la shell. se teclea una sesion completa;
 # en "holx" + retroceso + "a alba" el programa leer debe recibir "hola alba"
 build
-run_qemu 10 128M 'ls\ncat hola.txt\necho uno dos\ndesconocido\nleer\nholx\x7fa alba\nuptime\nfdtest\nfdtest\nps\ntop\nfiles\nexit\n'
+run_qemu 10 128M 'ls\ncat hola.txt\necho uno dos\ndesconocido\nleer\nholx\x7fa alba\nuptime\nfdtest\nfdtest\nps\ntop\nfiles\nintruso\nexit\n'
 disk_after=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$DISK")
 if [ "$DISK_BEFORE" != "$disk_after" ]; then
   echo "el arranque normal modifico el disco"; exit 1
@@ -150,6 +150,7 @@ sh_expected=(
   "[leer] recibi: hola alba"
   "sh: no encontrado: desconocido"
   "arriba desde hace"
+  "[intruso termino con codigo 139]"
 )
 for e in "${sh_expected[@]}"; do
   grep -qF -- "$e" "$OUT" || { echo "falta en la sesion de shell: $e"; cat "$OUT"; exit 1; }
