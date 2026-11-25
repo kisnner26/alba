@@ -6,7 +6,7 @@ QEMU    = qemu-system-aarch64 -machine virt -cpu cortex-a72 -m 128M -nographic \
           -global virtio-mmio.force-legacy=false \
           -drive file=$(DISK),if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
 
-.PHONY: build disk run test clean
+.PHONY: build disk run test windows clean
 
 # la imagen plana lleva la cabecera arm64: QEMU entrega el DTB en x0
 build:
@@ -22,6 +22,9 @@ run: build disk
 
 test:
 	./tests/boot.sh
+
+windows: build disk
+	python3 tools/package-windows.py
 
 clean:
 	cargo clean

@@ -1,0 +1,13 @@
+alba: prueba de consola en windows
+
+1. instala qemu de 64 bits: https://www.qemu.org/download/#windows
+2. descomprime todos los archivos en una misma carpeta.
+3. abre iniciar-alba.cmd. si qemu no aparece, agrega su carpeta al path
+   o instalalo en la ubicacion predeterminada de program files.
+4. en el prompt alba>, prueba help, ls, cat hola.txt y uptime.
+5. para salir de qemu, pulsa ctrl+a y luego x.
+
+esta version emula arm64 por software en un equipo x86-64, asi que no
+usa aceleracion de hardware. es una consola experimental: todavia no hay
+escritorio grafico ni almacenamiento editable. el disco se abre en modo
+solo lectura. no es un instalador ni modifica el sistema de windows.
