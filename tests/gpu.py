@@ -12,7 +12,7 @@ from pathlib import Path
 from threading import Timer
 
 
-def check(kernel, disk):
+def check(kernel, disk, mode="normal"):
     with tempfile.TemporaryDirectory(prefix="alba-gpu-", dir="/tmp") as directory:
         control = str(Path(directory, "qmp"))
         image = Path(directory, "scanout.ppm")
@@ -46,11 +46,17 @@ def check(kernel, disk):
                     qemu.stdin.flush()
                     return int(expect(r"interrupciones de timer: (\d+)").group(1))
 
-                expect("desktop: listo")
-                before = timer_irqs()
-                time.sleep(1)
-                if timer_irqs() != before:
-                    raise SystemExit("el escritorio estático despertó al temporizador")
+                if mode == "panic":
+                    expect(r"panic:")
+                    expect(r"fallo de prueba de alba")
+                    expect(r"sp=0x[0-9a-f]+ lr=0x[0-9a-f]+")
+                    expect("gpu: fallo visible")
+                else:
+                    expect("desktop: listo")
+                    before = timer_irqs()
+                    time.sleep(1)
+                    if timer_irqs() != before:
+                        raise SystemExit("el escritorio estático despertó al temporizador")
 
                 with socket.socket(socket.AF_UNIX) as connection:
                     connection.settimeout(5)
@@ -74,48 +80,49 @@ def check(kernel, disk):
 
                         execute("qmp_capabilities")
                         execute("screendump", {"filename": str(image)})
-                        events = [
-                            {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": "a"}}}
-                            for down in (True, False)
-                        ]
-                        execute("input-send-event", {"events": events})
-                        expect(r"entrada: tecla")
-                        execute("input-send-event", {"events": [
-                            {"type": "abs", "data": {"axis": "x", "value": 20000}},
-                            {"type": "abs", "data": {"axis": "y", "value": 10000}},
-                        ]})
-                        expect(r"entrada: puntero")
-
-                        def position(x, y):
-                            execute("input-send-event", {"events": [
-                                {"type": "abs", "data": {"axis": "x", "value": x}},
-                                {"type": "abs", "data": {"axis": "y", "value": y}},
-                            ]})
-
-                        def button(down):
-                            execute("input-send-event", {"events": [
-                                {"type": "btn", "data": {"down": down, "button": "left"}},
-                            ]})
-
-                        position(15500, 30200)
-                        button(True)
-                        expect(r"entrada: dock")
-                        button(False)
-
-                        position(16000, 12200)
-                        button(True)
-                        position(18300, 14000)
-                        expect(r"entrada: ventana")
-                        button(False)
-                        for code in ("f3", "g", "a", "l", "f4"):
-                            execute("input-send-event", {"events": [
-                                {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": code}}}
+                        if mode != "panic":
+                            events = [
+                                {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": "a"}}}
                                 for down in (True, False)
+                            ]
+                            execute("input-send-event", {"events": events})
+                            expect(r"entrada: tecla")
+                            execute("input-send-event", {"events": [
+                                {"type": "abs", "data": {"axis": "x", "value": 20000}},
+                                {"type": "abs", "data": {"axis": "y", "value": 10000}},
                             ]})
-                        expect(r"notas: guardado")
-                        qemu.stdin.write("cat notas.txt\necho fin\n")
-                        qemu.stdin.flush()
-                        expect(r"galalba>")
+                            expect(r"entrada: puntero")
+
+                            def position(x, y):
+                                execute("input-send-event", {"events": [
+                                    {"type": "abs", "data": {"axis": "x", "value": x}},
+                                    {"type": "abs", "data": {"axis": "y", "value": y}},
+                                ]})
+
+                            def button(down):
+                                execute("input-send-event", {"events": [
+                                    {"type": "btn", "data": {"down": down, "button": "left"}},
+                                ]})
+
+                            position(15500, 30200)
+                            button(True)
+                            expect(r"entrada: dock")
+                            button(False)
+
+                            position(16000, 12200)
+                            button(True)
+                            position(18300, 14000)
+                            expect(r"entrada: ventana")
+                            button(False)
+                            for code in ("f3", "g", "a", "l", "f4"):
+                                execute("input-send-event", {"events": [
+                                    {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": code}}}
+                                    for down in (True, False)
+                                ]})
+                            expect(r"notas: guardado")
+                            qemu.stdin.write("cat notas.txt\necho fin\n")
+                            qemu.stdin.flush()
+                            expect(r"galalba>")
                         execute("quit")
                 if qemu.wait(timeout=5) != 0:
                     raise SystemExit("qemu no cerró limpiamente")
@@ -131,6 +138,12 @@ def check(kernel, disk):
         pixels = ppm[header.end():]
         if height <= 32 or len(pixels) != width * height * 3:
             raise SystemExit("dimensiones inesperadas del scanout")
+        if mode == "panic":
+            if pixels[width * 10 * 3:width * 10 * 3 + 3] != bytes.fromhex("ea786d"):
+                raise SystemExit("la captura no reflejó la pantalla de fallo")
+            if pixels[width * 80 * 3:width * 150 * 3].count(bytes.fromhex("f1f2f6")) < 5:
+                raise SystemExit("la pantalla de fallo no mostró texto")
+            return
         dot = (15 * width + 22) * 3
         if pixels[:3] != bytes.fromhex("171c28") or pixels[dot:dot + 3] != bytes.fromhex("5d95ff"):
             raise SystemExit("la captura no refleja la barra y su actualización parcial")
@@ -139,4 +152,4 @@ def check(kernel, disk):
 
 if __name__ == "__main__":
     check(*sys.argv[1:])
-    print("ok: scanout virtio-gpu verificado")
+    print("ok: pantalla de fallo verificada" if sys.argv[-1] == "panic" else "ok: scanout virtio-gpu verificado")

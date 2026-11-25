@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. doce pruebas:
+# arranca alba en qemu y comprueba la salida. trece pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
@@ -12,6 +12,7 @@
 #   10. virtio-gpu: validar los píxeles del scanout en una captura qmp
 #   11. estabilidad: lanzar mil procesos y verificar páginas libres
 #   12. entradas truncadas o dañadas en los lectores elf y albafs
+#   13. diagnóstico fatal visible por serie y en el framebuffer
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -253,3 +254,8 @@ python3 tests/soak.py "$KERNEL" target/alba-soak.img
 # --- 12. mutación de formatos en el host, con los lectores del kernel ---
 rustc --edition=2021 -O tests/fuzz.rs -o target/fuzz-formatos
 target/fuzz-formatos target/disk/hola target/alba-soak.img
+
+# --- 13. pantalla de fallo con el dispositivo gráfico activo ---
+build --features gpu-panic-test
+python3 tests/gpu.py "$KERNEL" "$DISK" panic
+build >/dev/null 2>&1
