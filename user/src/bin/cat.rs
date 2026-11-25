@@ -33,8 +33,14 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8) -> ! {
         alba::close(fd);
     }
     if !any {
-        println!("uso: cat <archivo>...");
-        status = 2;
+        let mut buf = [0; 512];
+        loop {
+            match alba::read(0, &mut buf) {
+                Some(0) => break,
+                Some(n) => { alba::write(&buf[..n]); }
+                None => { status = 1; break; }
+            }
+        }
     }
     alba::exit(status)
 }

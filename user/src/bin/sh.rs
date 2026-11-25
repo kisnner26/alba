@@ -23,14 +23,19 @@ pub extern "C" fn _start() -> ! {
 
         let mut words = [""; MAX_ARGS];
         let mut count = 0;
-        for w in line.split_whitespace() {
-            if count == MAX_ARGS {
-                break;
-            }
-            words[count] = w;
+        for word in line.split_whitespace() {
+            if count == MAX_ARGS { break }
+            words[count] = word;
             count += 1;
         }
         if count == 0 {
+            continue;
+        }
+        if words[..count].iter().any(|word| matches!(*word, "<" | ">" | ">>" | "|")) {
+            if let Some(pid) = alba::exec("redir", &words[..count]) {
+                if alba::wait(pid) == 0 { continue }
+            }
+            println!("sh: redireccion invalida");
             continue;
         }
 
