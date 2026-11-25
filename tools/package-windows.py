@@ -16,5 +16,10 @@ for source in files.values():
         raise SystemExit(f"falta {source}; ejecuta make build disk")
 with ZipFile(out, "w", ZIP_DEFLATED) as archive:
     for name, source in files.items():
-        archive.write(source, name)
+        if source.suffix in {".cmd", ".txt"}:
+            # read_text normaliza los finales existentes antes de generar crlf.
+            content = source.read_text(encoding="utf-8")
+            archive.writestr(name, content.replace("\n", "\r\n").encode("utf-8"))
+        else:
+            archive.write(source, name)
 print(out)
