@@ -1,5 +1,5 @@
 //! shell de alba: lee una linea, la parte en palabras y lanza el programa del disco con ese
-//! nombre, esperando a que termine. incorporados: help, exit.
+//! nombre, esperando a que termine. incorporados: help, exit, top, files, mv.
 
 #![no_std]
 #![no_main]
@@ -39,10 +39,22 @@ pub extern "C" fn _start() -> ! {
             "__recursos" => measure(boot_us),
             "__lanzamiento" => measure_launch(),
             "help" => {
-                println!("incorporados: help, exit");
+                println!("incorporados: help, exit, top, files, mv");
                 println!("el resto son programas del disco: prueba ls");
             }
-            cmd => match alba::exec(cmd, &words[..count]) {
+            "mv" => {
+                if count != 3 || alba::syscall(26,
+                    words[1].as_ptr() as u64, words[1].len() as u64,
+                    words[2].as_ptr() as u64, words[2].len() as u64,
+                ) != 0 {
+                    println!("mv: se requiere un origen y un destino libre");
+                }
+            }
+            cmd => match alba::exec(match cmd {
+                "top" => "ps",
+                "files" => "ls",
+                _ => cmd,
+            }, &words[..count]) {
                 Some(pid) => {
                     let code = alba::wait(pid);
                     if code != 0 {
