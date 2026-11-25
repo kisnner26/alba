@@ -95,6 +95,11 @@ pub fn timer_irqs() -> u64 {
     syscall(11, 0, 0, 0, 0)
 }
 
+/// peticiones enviadas al disco desde el arranque
+pub fn disk_requests() -> u64 {
+    syscall(12, 0, 0, 0, 0)
+}
+
 /// espera a que termine el proceso `pid` y devuelve su codigo de salida (u64::MAX si no existe)
 pub fn wait(pid: u64) -> u64 {
     syscall(5, pid, 0, 0, 0)
