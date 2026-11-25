@@ -94,7 +94,7 @@ la eficiencia energetica es la prioridad maxima y se traduce en reglas concretas
 - las excepciones desde EL0 entran por los vectores `0x400` (sync) y `0x480` (irq). el marco guarda `sp_el0`.
 - `svc #0`: número en `x8`, argumentos `x0`-`x2`, resultado en `x0` (`u64::MAX` = error). tabla en [src/syscall.rs](../src/syscall.rs).
 - el kernel nunca confía en un puntero de EL0: `write` comprueba que el rango caiga entero dentro de una región mapeada del proceso actual.
-- cualquier otra excepción desde EL0 (por ejemplo leer memoria del kernel) termina solo esa tarea.
+- cualquier otra excepción desde EL0 (por ejemplo leer memoria del kernel) termina solo esa tarea, con código de salida 139 (128 + 11, como una violación de segmento): la shell lo informa y un script no lo confunde con un éxito.
 - los programas son un crate aparte ([user/](../user/)): la biblioteca `alba` da las llamadas al sistema y `println!`, y `user/user.ld` les da un mapa de memoria con segmentos alineados a página. `tools/mkdisk.sh` los compila y los empaqueta en el disco; el kernel ya no lleva programas embebidos. como se enlazan en `0x8000_0000`, el mismo binario corre en cualquier proceso.
 
 ## decisiones
