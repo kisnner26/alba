@@ -79,6 +79,9 @@ mod elf;
 mod fdt;
 mod fs;
 mod gic;
+#[path = "../user/src/gfx.rs"]
+#[allow(dead_code)]
+mod gfx;
 mod gpu;
 mod heap;
 mod input;
@@ -309,7 +312,17 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    println!("panic: {}", info);
+    let (sp, lr): (u64, u64);
+    // guarda el contexto del manejador sin tocar la pila.
+    unsafe { core::arch::asm!("mov {sp}, sp", "mov {lr}, x30",
+        sp = out(reg) sp, lr = out(reg) lr, options(nomem, nostack, preserves_flags)); }
+    fatal(format_args!("panic: {}\nsp={:#x} lr={:#x}", info, sp, lr))
+}
+
+pub fn fatal(message: fmt::Arguments<'_>) -> ! {
+    irq::save();
+    println!("{}", message);
+    gpu::fatal_screen(message);
     loop {
         unsafe { core::arch::asm!("wfe") };
     }

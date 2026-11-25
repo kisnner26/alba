@@ -140,14 +140,10 @@ fn halt() -> ! {
 #[no_mangle]
 extern "C" fn handle_sync() {
     let (esr, elr, far) = read_esr();
-    println!(
+    crate::fatal(format_args!(
         "excepcion sincrona: clase={:#04x} esr={:#x} elr={:#x} far={:#x}",
-        esr >> 26,
-        esr,
-        elr,
-        far
-    );
-    halt();
+        esr >> 26, esr, elr, far
+    ));
 }
 
 /// marco guardado en la pila por save_regs (272 bytes)

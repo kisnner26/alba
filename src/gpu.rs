@@ -97,6 +97,11 @@ impl Gpu {
 
     #[inline(never)]
     fn command(&self, kind: u32, body: &[u32]) -> u32 {
+        self.exchange(kind, body, false)
+    }
+
+    #[inline(never)]
+    fn exchange(&self, kind: u32, body: &[u32], fatal: bool) -> u32 {
         let p = self.page;
         let masked = irq::save();
         // la única tarea que usa la cola escribe antes de publicar y lee después de completarse.
@@ -109,6 +114,11 @@ impl Gpu {
                 word(off + 12).write_volatile(flags);
             };
             let current = half(AVAIL + 2).read_volatile();
+            // en una falla no se puede esperar al planificador ni pisar un dma pendiente.
+            if fatal && half(USED + 2).read_volatile() != current {
+                irq::restore(masked);
+                return 0;
+            }
             word(COMMAND).write_volatile(kind);
             word(COMMAND + 4).write_volatile(1); // fence: terminar antes de responder
             word(COMMAND + 8).write_volatile(u32::from(current));
@@ -123,8 +133,18 @@ impl Gpu {
             half(AVAIL + 2).write_volatile(current.wrapping_add(1));
             fence(Ordering::SeqCst);
             self.mmio.write(virtio::QUEUE_NOTIFY, 0);
+            let mut limit = 0;
             while half(USED + 2).read_volatile() == current {
-                sched::wait_gpu();
+                if fatal {
+                    limit += 1;
+                    if limit == 1_000_000 {
+                        irq::restore(masked);
+                        return 0;
+                    }
+                    core::hint::spin_loop();
+                } else {
+                    sched::wait_gpu();
+                }
             }
             fence(Ordering::SeqCst);
             let done = USED + 4 + usize::from(current) % QUEUE * 8;
@@ -184,10 +204,71 @@ fn draw_test_pattern() -> Option<()> {
     }
     crate::println!("gpu: scanout {}x{}", width, height);
     let masked = irq::save();
+    let frame = Framebuffer { addr: buffer, width, height };
+    // el framebuffer sólo se publica después de configurar la salida.
+    unsafe { addr_of_mut!(FB).write(Some((0, frame))) };
+    if cfg!(feature = "gpu-panic-test") {
+        panic!("fallo de prueba de alba");
+    }
     if let Ok(pid) = sched::exec("desktop") {
         // el proceso nuevo todavía no ha podido correr en este core.
-        unsafe { addr_of_mut!(FB).write(Some((pid, Framebuffer { addr: buffer, width, height }))) };
+        unsafe { addr_of_mut!(FB).write(Some((pid, frame))) };
     }
     irq::restore(masked);
     Some(())
+}
+
+struct FatalText<'a> {
+    canvas: crate::gfx::Canvas<'a>,
+    x: i32,
+    y: i32,
+}
+
+impl core::fmt::Write for FatalText<'_> {
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        for byte in text.bytes() {
+            if self.x + 12 > self.canvas.w as i32 || byte == b'\n' {
+                self.x = 24;
+                self.y += 20;
+            }
+            if self.y + 14 > self.canvas.h as i32 {
+                break;
+            }
+            if byte != b'\n' {
+                self.canvas.bytes(self.x, self.y, &[byte], 2, 0xf1f2f6);
+                self.x += 12;
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn fatal_screen(message: core::fmt::Arguments<'_>) {
+    use core::fmt::Write;
+    let Some(gpu) = device() else { return };
+    // fatal() ya enmascaró irq. el núcleo actual es el único que puede tocar el framebuffer.
+    let Some((_, fb)) = (unsafe { addr_of!(FB).read() }) else { return };
+    // con irq enmascarada, sólo el dispositivo podría tocar la cola.
+    let idle = unsafe {
+        ((gpu.page + AVAIL + 2) as *const u16).read_volatile()
+            == ((gpu.page + USED + 2) as *const u16).read_volatile()
+    };
+    if !idle {
+        return;
+    }
+    // las páginas pertenecen al driver mientras existe el scanout.
+    let pixels = unsafe { core::slice::from_raw_parts_mut(fb.addr as *mut u32, (fb.width * fb.height) as usize) };
+    pixels.fill(0x171c28);
+    let mut content = FatalText {
+        canvas: crate::gfx::Canvas { pixels, w: fb.width as usize, h: fb.height as usize },
+        x: 24, y: 80,
+    };
+    content.canvas.line(0, 10, fb.width as i32, 0xea786d);
+    content.canvas.text(24, 27, "alba fallo", 3, 0xea786d);
+    let _ = content.write_fmt(message);
+    if gpu.exchange(0x105, &[0, 0, fb.width, fb.height, 0, 0, 1, 0], true) == OK {
+        if gpu.exchange(0x104, &[0, 0, fb.width, fb.height, 1, 0], true) == OK {
+            crate::println!("gpu: fallo visible");
+        }
+    }
 }
