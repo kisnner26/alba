@@ -158,6 +158,12 @@ ejecutar:
 
 para salir de QEMU: `ctrl+a`, luego `x`.
 
+### probar en windows con qemu
+
+en la máquina de desarrollo, `make windows` genera `target/alba-windows-qemu.zip` con el kernel, el disco de prueba y un lanzador. en windows, instala [qemu de 64 bits](https://www.qemu.org/download/#windows), descomprime el zip y abre `iniciar-alba.cmd`. en la consola puedes usar `help`, `ls`, `cat hola.txt` y `uptime`; para salir, pulsa `ctrl+a` y luego `x`.
+
+en un equipo x86-64, qemu emula el procesador arm64 por software, sin aceleración de hardware. esta versión todavía no tiene escritorio gráfico ni archivos editables; el disco del paquete se abre en modo de solo lectura. no es un instalador de alba en el equipo físico.
+
 para probar el manejador de excepciones, compilar con la feature `crash-test`, que ejecuta una instrucción `brk` al arrancar:
 
     cargo build --release --features crash-test
