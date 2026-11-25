@@ -65,14 +65,16 @@ pub fn dispatch(nr: u64, a: [u64; 5]) -> u64 {
         24 => procinfo(a[0], a[1], a[2]),
         25 => save_text(a[0], a[1], a[2], a[3]).map_or(ERR, |_| 0),
         26 => rename(a[0], a[1], a[2], a[3]).map_or(ERR, |_| 0),
+        27 => exec_io(a[0], a[1]),
         _ => ERR,
     }
 }
 
 fn read(fd: u64, ptr: u64, len: u64) -> u64 {
-    if fd == 0 {
+    if fd == 0 && sched::file(0).is_none() {
         return output_slice(ptr, len).map_or(ERR, |buf| console::read(buf) as u64);
     }
+    if matches!(fd, 1 | 2) { return ERR; }
     let Some(file) = sched::file(fd) else { return ERR };
     let Some(buf) = output_slice(ptr, len) else { return ERR };
     let Some(n) = fs::read_id(file.entry.get(), u64::from(file.offset), buf) else { return ERR };
@@ -106,7 +108,7 @@ fn output_slice(ptr: u64, len: u64) -> Option<&'static mut [u8]> {
 }
 
 fn write(fd: u64, ptr: u64, len: u64) -> u64 {
-    if fd >= 3 {
+    if fd >= 3 || (fd == 1 && sched::file(1).is_some()) {
         let Some(file) = sched::file(fd) else { return ERR };
         let Some(data) = copy_in(ptr, len, 4096) else { return ERR };
         let Some(end) = fs::append(file.entry.get(), &data) else { return ERR };
@@ -219,4 +221,34 @@ fn rename(from: u64, from_len: u64, to: u64, to_len: u64) -> Option<()> {
     let from = copy_in(from, from_len, 39)?;
     let to = copy_in(to, to_len, 39)?;
     fs::rename(core::str::from_utf8(&from).ok()?, core::str::from_utf8(&to).ok()?)
+}
+
+// formato: modo, nombre de entrada\0, nombre de salida\0, argumentos separados por cero.
+fn exec_io(ptr: u64, len: u64) -> u64 {
+    let Some(spec) = copy_in(ptr, len, 512) else { return ERR };
+    let Some((&mode, names)) = spec.split_first() else { return ERR };
+    if mode > 1 {
+        return ERR;
+    }
+    let mut fields = names.split(|&byte| byte == 0);
+    let (Some(input), Some(output), Some(command)) = (fields.next(), fields.next(), fields.next()) else {
+        return ERR;
+    };
+    if input.len() > 39 || output.len() > 39 || command.is_empty() {
+        return ERR;
+    }
+    let (Ok(input), Ok(output), Ok(name)) = (core::str::from_utf8(input), core::str::from_utf8(output), core::str::from_utf8(command)) else {
+        return ERR;
+    };
+    let mut argv = [b"".as_slice(); 16];
+    argv[0] = command;
+    let mut argc = 1;
+    for arg in fields {
+        if argc == argv.len() {
+            return ERR;
+        }
+        argv[argc] = arg;
+        argc += 1;
+    }
+    sched::exec_redirect(name, &argv[..argc], input, output, mode == 1).map_or(ERR, |pid| pid as u64)
 }
