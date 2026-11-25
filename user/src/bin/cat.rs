@@ -11,22 +11,26 @@ pub extern "C" fn _start(argc: usize, argv: *const *const u8) -> ! {
     let mut any = false;
     for name in alba::args(argc, argv).skip(1) {
         any = true;
+        let Some(fd) = alba::open(name) else {
+            println!("cat: no se pudo abrir: {}", name);
+            status = 1;
+            continue;
+        };
         let mut buf = [0u8; 512];
-        let mut offset = 0u64;
         loop {
-            match alba::read_file(name, &mut buf, offset) {
+            match alba::read(fd, &mut buf) {
                 Some(0) => break,
                 Some(n) => {
                     alba::write(&buf[..n]);
-                    offset += n as u64;
                 }
                 None => {
-                    println!("cat: no existe: {}", name);
+                    println!("cat: error de lectura: {}", name);
                     status = 1;
                     break;
                 }
             }
         }
+        alba::close(fd);
     }
     if !any {
         println!("uso: cat <archivo>...");
