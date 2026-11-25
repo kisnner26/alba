@@ -210,6 +210,11 @@ inglés y español latinoamericano. se pueden seleccionar las vistas del dock
 y arrastrar el panel por su cabecera. `f3` abre `notas.txt` para editar
 hasta 132 caracteres, `f4` guarda y `esc` cierra la nota.
 
+si el kernel entra en pánico, la consola serie muestra el mensaje y los
+registros de diagnóstico. con el framebuffer activo y la cola de la gpu
+libre, el fallo también aparece en pantalla. `make soak` ejecuta la prueba
+opcional de resistencia durante 30 minutos.
+
 ### probar en windows con qemu
 
 en la máquina de desarrollo, `make windows` genera `target/alba-windows-qemu.zip` con el kernel, el disco de prueba y un lanzador. en windows, instala [qemu de 64 bits](https://www.qemu.org/download/#windows), descomprime el zip y abre `iniciar-alba.cmd`. en la consola puedes usar `help`, `ls`, `cat hola.txt` y `uptime`; para salir, pulsa `ctrl+a` y luego `x`.
