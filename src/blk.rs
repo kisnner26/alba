@@ -21,6 +21,9 @@ const QSIZE: usize = 8;
 const MAX_BYTES: usize = 64 * 1024;
 
 const T_IN: u32 = 0; // leer
+const RO: u32 = 1 << 5;
+const FLUSH: u32 = 1 << 9;
+const T_FLUSH: u32 = 4;
 const T_OUT: u32 = 1; // escribir
 const F_NEXT: u16 = 1;
 const F_WRITE: u16 = 2; // el dispositivo escribe en este buffer
@@ -42,6 +45,7 @@ struct Blk {
     avail_idx: u16,
     used_idx: u16,
     sectors: u64,
+    features: u32,
     irq_mode: bool, // true: las tareas se bloquean y la interrupcion las despierta
 }
 
@@ -98,14 +102,16 @@ pub fn init() -> bool {
     m.write(virtio::STATUS, virtio::ST_ACKNOWLEDGE);
     m.write(virtio::STATUS, virtio::ST_ACKNOWLEDGE | virtio::ST_DRIVER);
 
-    // unica caracteristica aceptada: VIRTIO_F_VERSION_1 (bit 32 = bit 0 de la palabra 1)
+    // version moderna obligatoria; ro y flush se negocian si el dispositivo los ofrece.
     m.write(virtio::DEVICE_FEATURES_SEL, 1);
     if m.read(virtio::DEVICE_FEATURES) & 1 == 0 {
         m.write(virtio::STATUS, virtio::ST_FAILED);
         return false;
     }
+    m.write(virtio::DEVICE_FEATURES_SEL, 0);
+    let features = m.read(virtio::DEVICE_FEATURES) & (RO | FLUSH);
     m.write(virtio::DRIVER_FEATURES_SEL, 0);
-    m.write(virtio::DRIVER_FEATURES, 0);
+    m.write(virtio::DRIVER_FEATURES, features);
     m.write(virtio::DRIVER_FEATURES_SEL, 1);
     m.write(virtio::DRIVER_FEATURES, 1);
     let st = virtio::ST_ACKNOWLEDGE | virtio::ST_DRIVER | virtio::ST_FEATURES_OK;
@@ -138,7 +144,7 @@ pub fn init() -> bool {
     let sectors = m.config_u64(0);
     unsafe {
         *core::ptr::addr_of_mut!(BLK) =
-            Some(Blk { mmio: m, queue, req, avail_idx: 0, used_idx: 0, sectors, irq_mode: false });
+            Some(Blk { mmio: m, queue, req, avail_idx: 0, used_idx: 0, sectors, features, irq_mode: false });
     }
     true
 }
@@ -167,6 +173,17 @@ pub fn irq(id: u32) {
 
 pub fn sectors() -> u64 {
     blk().map_or(0, |b| b.sectors)
+}
+
+pub fn can_persist() -> bool {
+    let g = crate::irq::save();
+    let writable = blk().is_some_and(|b| b.features & (RO | FLUSH) == FLUSH);
+    crate::irq::restore(g);
+    writable
+}
+
+pub fn flush() -> bool {
+    can_persist() && request(T_FLUSH, 0, core::ptr::null_mut(), 0)
 }
 
 /// lee un sector. false si no hay disco, el sector no existe o el dispositivo falla.
@@ -208,7 +225,10 @@ fn transfer(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
 fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
     let g = crate::irq::save();
     let count = (len / SECTOR) as u64;
-    if sector.checked_add(count).is_none_or(|end| end > sectors()) {
+    if blk().is_none_or(|b| {
+        sector.checked_add(count).is_none_or(|end| end > b.sectors)
+            || (kind == T_OUT && b.features & RO != 0)
+    }) {
         crate::irq::restore(g);
         return false;
     }
@@ -226,7 +246,7 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
             crate::irq::restore(g);
             return true;
         }
-    } else {
+    } else if kind == T_OUT {
         // invalidar antes de enviar cubre tambien escrituras que fallen en parte.
         cache.invalidate(sector, count);
     }
@@ -255,8 +275,12 @@ fn request(kind: u32, sector: u64, data: *mut u8, len: usize) -> bool {
         w16(at + 12, flags);
         w16(at + 14, next);
     };
-    d(0, hdr, 16, F_NEXT, 1);
-    d(1, buf, len as u32, F_NEXT | if kind == T_IN { F_WRITE } else { 0 }, 2);
+    if kind == T_FLUSH {
+        d(0, hdr, 16, F_NEXT, 2);
+    } else {
+        d(0, hdr, 16, F_NEXT, 1);
+        d(1, buf, len as u32, F_NEXT | if kind == T_IN { F_WRITE } else { 0 }, 2);
+    }
     d(2, status, 1, F_WRITE, 0);
 
     // publicar la cadena (cabeza = descriptor 0) en el anillo "avail" y avisar al dispositivo

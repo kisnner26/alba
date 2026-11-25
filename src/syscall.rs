@@ -1,7 +1,7 @@
 // llamadas al sistema. convencion: `svc #0`, numero en x8, argumentos en x0-x2,
 // resultado en x0 (u64::MAX = error).
 //
-//   0  write(fd, ptr, len)   escribe en la consola (solo fd 1)
+//   0  write(fd, ptr, len)   escribe consola (fd 1 y 2) o anexa a un archivo (fd >= 3)
 //   1  exit(code)            termina el proceso con un codigo de salida
 //   2  sleep(ticks)          duerme (1 tick = 100 ms)
 //   3  getpid()              id de la tarea
@@ -14,9 +14,11 @@
 //   11 timer_irqs()          interrupciones de timer desde el arranque (mide cuanto se despierta la cpu)
 //   12 disk_requests()      peticiones enviadas al disco desde el arranque
 //   7  read(fd, ptr, len)    lee consola (fd 0) o archivo (fd >= 3)
-//   13 open(nombre, len)     abre un archivo en modo lectura
+//   13 open(nombre, len)     abre un archivo
 //   14 seek(fd, offset)      fija el desplazamiento absoluto hasta el fin del archivo
 //   15 close(fd)             libera el descriptor
+//   16 create(nombre, len)   crea un archivo vacio
+//   17 unlink(nombre, len)   elimina un archivo
 //   6  exec(ruta, nruta, args, nargs)  lanza un programa del disco; args son cadenas
 //                                      terminadas en cero; devuelve el pid
 
@@ -49,6 +51,8 @@ pub fn dispatch(nr: u64, a: [u64; 5]) -> u64 {
         13 => open(a[0], a[1]).unwrap_or(ERR),
         14 => seek(a[0], a[1]).unwrap_or(ERR),
         15 => sched::close_file(a[0]).map_or(ERR, |_| 0),
+        16 => name_op(a[0], a[1], fs::create),
+        17 => name_op(a[0], a[1], fs::unlink),
         _ => ERR,
     }
 }
@@ -59,26 +63,19 @@ fn read(fd: u64, ptr: u64, len: u64) -> u64 {
     }
     let Some(file) = sched::file(fd) else { return ERR };
     let Some(buf) = output_slice(ptr, len) else { return ERR };
-    let entry = &fs::files()[usize::from(file.entry.get()) - 1];
-    let Some(n) = fs::read_at(entry, u64::from(file.offset), buf) else { return ERR };
+    let Some(n) = fs::read_id(file.entry.get(), u64::from(file.offset), buf) else { return ERR };
     sched::set_file_offset(fd, file.offset + n as u32).map_or(ERR, |_| n as u64)
 }
 
 fn open(ptr: u64, len: u64) -> Option<u64> {
     let name = copy_in(ptr, len, 40)?;
     let name = core::str::from_utf8(&name).ok()?;
-    if name.is_empty() || name.bytes().any(|b| matches!(b, 0 | b'/' | b'\\')) {
-        return None;
-    }
-    let index = fs::files().iter().position(|entry| entry.name == name)?;
-    // el directorio admite como maximo 512 entradas.
-    sched::open_file(core::num::NonZeroU16::new((index + 1) as u16)?)
+    sched::open_file(core::num::NonZeroU64::new(fs::open(name)?)?)
 }
 
 fn seek(fd: u64, offset: u64) -> Option<u64> {
     let file = sched::file(fd)?;
-    let entry = &fs::files()[usize::from(file.entry.get()) - 1];
-    if offset > u64::from(entry.size) {
+    if offset > u64::from(fs::size(file.entry.get())?) {
         return None;
     }
     sched::set_file_offset(fd, offset as u32)?;
@@ -97,7 +94,13 @@ fn output_slice(ptr: u64, len: u64) -> Option<&'static mut [u8]> {
 }
 
 fn write(fd: u64, ptr: u64, len: u64) -> u64 {
-    if fd != 1 || len > 4096 || !sched::user_range_ok(ptr, len, false) {
+    if fd >= 3 {
+        let Some(file) = sched::file(fd) else { return ERR };
+        let Some(data) = copy_in(ptr, len, 4096) else { return ERR };
+        let Some(end) = fs::append(file.entry.get(), &data) else { return ERR };
+        return sched::set_file_offset(fd, end).map_or(ERR, |_| len);
+    }
+    if !matches!(fd, 1 | 2) || len > 4096 || !sched::user_range_ok(ptr, len, false) {
         return ERR;
     }
     let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
@@ -149,14 +152,14 @@ fn readfile(name: u64, name_len: u64, buf: u64, buf_len: u64, offset: u64) -> u6
     let Ok(name) = core::str::from_utf8(&name) else {
         return ERR;
     };
-    let (Some(entry), Some(out)) = (fs::find(name), output_slice(buf, buf_len)) else {
+    let Some(out) = output_slice(buf, buf_len) else {
         return ERR;
     };
-    fs::read_at(entry, offset, out).map_or(ERR, |n| n as u64)
+    fs::read_named(name, offset, out).map_or(ERR, |n| n as u64)
 }
 
 fn listdir(index: u64, buf: u64, buf_len: u64) -> u64 {
-    let Some(e) = crate::fs::files().get(index as usize) else {
+    let Some(e) = fs::list(index as usize) else {
         return ERR;
     };
     let name = e.name.as_bytes();
@@ -165,4 +168,10 @@ fn listdir(index: u64, buf: u64, buf_len: u64) -> u64 {
     }
     unsafe { core::ptr::copy_nonoverlapping(name.as_ptr(), buf as *mut u8, name.len()) };
     (e.size as u64) << 32 | ((e.flags & 0xff) as u64) << 16 | name.len() as u64
+}
+
+fn name_op(ptr: u64, len: u64, op: fn(&str) -> Option<()>) -> u64 {
+    let Some(name) = copy_in(ptr, len, 39) else { return ERR };
+    let Ok(name) = core::str::from_utf8(&name) else { return ERR };
+    op(name).map_or(ERR, |_| 0)
 }

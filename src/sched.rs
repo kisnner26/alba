@@ -95,17 +95,16 @@ extern "C" {
     fn task_user_trampoline();
 }
 
-#[allow(dead_code)]
 const FIRST_FILE_FD: u64 = 3;
 const FILE_FDS: usize = 16;
 
 #[derive(Clone, Copy)]
 pub struct OpenFile {
-    // indice + 1 para que Option<OpenFile> quepa en ocho bytes.
-    pub entry: core::num::NonZeroU16,
+    pub entry: core::num::NonZeroU64,
     pub offset: u32,
 }
 
+#[allow(dead_code)]
 struct Task {
     sp: usize,
     stack: usize,  // pila del kernel; 0 = pila de arranque, no se libera
@@ -124,6 +123,7 @@ enum Wait {
     Child(usize), // espera a que termine el proceso con ese id
     Input,        // espera entrada de la consola
     Disk,         // espera que el disco termine una peticion
+    Fs,           // espera que termine una operacion del sistema de archivos
     DiskFree,     // espera a que otra tarea libere la cola del disco
 }
 
@@ -202,11 +202,7 @@ pub fn spawn(f: fn()) -> usize {
 /// albafs, lo carga en un espacio de direcciones propio, deja argc/argv en su pila y crea el
 /// proceso, que arranca en EL0 en el punto de entrada del ELF
 pub fn exec_args(name: &str, args: &[&[u8]]) -> Result<usize, &'static str> {
-    let file = fs::find(name).ok_or("no existe")?;
-    if file.flags & fs::FLAG_EXEC == 0 {
-        return Err("no es ejecutable");
-    }
-    let data = fs::read(name).ok_or("error de lectura")?;
+    let data = fs::read_exec(name)?;
     let (mut space, entry) = AddrSpace::from_elf(&data)?;
     let (sp, argc, argv) = match space.push_args(args) {
         Ok(v) => v,
@@ -232,7 +228,7 @@ pub fn user_range_ok(ptr: u64, len: u64, write: bool) -> bool {
         .is_some_and(|sp| sp.contains(ptr as usize, len as usize, write))
 }
 
-pub fn open_file(entry: core::num::NonZeroU16) -> Option<u64> {
+pub fn open_file(entry: core::num::NonZeroU64) -> Option<u64> {
     let files = &mut sched().current.as_mut()?.files;
     let index = files.iter().position(Option::is_none)?;
     files[index] = Some(OpenFile { entry, offset: 0 });
@@ -463,16 +459,33 @@ pub fn wait_disk() {
 
 /// espera el turno para usar la cola; irq debe estar enmascarada.
 pub fn wait_disk_free() {
-    sched().current.as_mut().unwrap().wait = Some(Wait::DiskFree);
+    wait_turn(Wait::DiskFree);
+}
+
+pub fn wait_fs() {
+    wait_turn(Wait::Fs);
+}
+
+fn wait_turn(reason: Wait) {
+    sched().current.as_mut().unwrap().wait = Some(reason);
     switch_away(Mode::Block);
 }
 
 /// despierta a quienes esperan el turno; irq debe estar enmascarada.
 pub fn wake_disk_free() {
+    wake_turn(Wait::DiskFree);
+}
+
+pub fn wake_fs() {
+    wake_turn(Wait::Fs);
+}
+
+fn wake_turn(reason: Wait) {
+    let reason = Some(reason);
     let s = sched();
     let mut i = 0;
     while i < s.blocked.len() {
-        if s.blocked[i].wait == Some(Wait::DiskFree) {
+        if s.blocked[i].wait == reason {
             let mut t = s.blocked.swap_remove(i);
             t.wait = None;
             s.ready.push_back(t);

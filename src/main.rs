@@ -222,13 +222,14 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
 
         match fs::mount() {
             Ok(()) => {
-                println!("albafs: {} archivos", fs::files().len());
-                for e in fs::files() {
+                println!("albafs: {} archivos", fs::count());
+                for e in (0..fs::count()).filter_map(fs::list) {
                     let x = if e.flags & fs::FLAG_EXEC != 0 { " ejecutable" } else { "" };
                     println!("  {} ({} bytes{})", e.name, e.size, x);
                 }
-                if let Some(d) = fs::read("hola.txt") {
-                    println!("hola.txt: {}", core::str::from_utf8(&d).unwrap_or("?").trim_end());
+                let mut text = [0; 64];
+                if let Some(n) = fs::read_named("hola.txt", 0, &mut text) {
+                    println!("hola.txt: {}", core::str::from_utf8(&text[..n]).unwrap_or("?").trim_end());
                 }
             }
             Err(e) => println!("albafs: FALLO al montar: {}", e),
