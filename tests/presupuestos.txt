@@ -1,7 +1,7 @@
 # límites medidos con tools/medir.sh. +5% (redondeado hacia arriba).
 # los límites existentes solo bajan. añade una métrica al incorporar un programa.
 arranque_us                                  106321
-disco_minimo_bytes                           272564
+disco_minimo_bytes                           269338
 kernel_bytes                                  73341
 lanzamiento_caliente_us                          39
 lanzamiento_frio_us                              48
@@ -20,6 +20,7 @@ programa.intruso2.bytes                       13709
 programa.lanzador.bytes                       13995
 programa.leer.bytes                           14381
 programa.ls.bytes                             14104
+programa.ps.bytes                             14205
 programa.rm.bytes                             13919
 programa.sh.bytes                             19119
 programa.touch.bytes                          13928
