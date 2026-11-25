@@ -81,6 +81,7 @@ mod fs;
 mod gic;
 mod gpu;
 mod heap;
+mod input;
 mod irq;
 mod mmu;
 mod pmm;
@@ -255,6 +256,7 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
 
     sched::init();
     if gpu::init() {
+        input::init();
         sched::spawn(gpu::start);
     }
 

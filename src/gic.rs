@@ -40,7 +40,7 @@ pub fn dispatch() {
         crate::timer::IRQ => crate::timer::tick(),
         crate::console::IRQ => crate::console::irq(),
         48..=79 => {
-            if !crate::gpu::irq(id) {
+            if !crate::gpu::irq(id) && !crate::input::irq(id) {
                 crate::blk::irq(id);
             }
         }

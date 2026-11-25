@@ -52,42 +52,16 @@ pub fn flush(rect: [u64; 4]) -> Option<()> {
 #[inline(never)]
 pub fn init() -> bool {
     let Some(mmio) = virtio::find(virtio::ID_GPU) else { return false };
-    mmio.write(virtio::STATUS, 0);
-    let driver = virtio::ST_ACKNOWLEDGE | virtio::ST_DRIVER;
-    mmio.write(virtio::STATUS, virtio::ST_ACKNOWLEDGE);
-    mmio.write(virtio::STATUS, driver);
-    mmio.write(virtio::DEVICE_FEATURES_SEL, 1);
-    if mmio.read(virtio::DEVICE_FEATURES) & 1 == 0 {
-        mmio.write(virtio::STATUS, virtio::ST_FAILED);
-        return false;
-    }
-    mmio.write(virtio::DRIVER_FEATURES_SEL, 0);
-    mmio.write(virtio::DRIVER_FEATURES, 0);
-    mmio.write(virtio::DRIVER_FEATURES_SEL, 1);
-    mmio.write(virtio::DRIVER_FEATURES, 1);
-    let ready = driver | virtio::ST_FEATURES_OK;
-    mmio.write(virtio::STATUS, ready);
-    mmio.write(virtio::QUEUE_SEL, 0);
-    if mmio.read(virtio::STATUS) & virtio::ST_FEATURES_OK == 0
-        || mmio.read(virtio::QUEUE_NUM_MAX) < QUEUE as u32
-        || mmio.read(virtio::QUEUE_READY) != 0
-    {
-        mmio.write(virtio::STATUS, virtio::ST_FAILED);
-        return false;
-    }
     let Some(page) = pmm::alloc_pages(1) else {
         mmio.write(virtio::STATUS, virtio::ST_FAILED);
         return false;
     };
     // página propia del driver, mapeada por identidad y coherente en qemu.
     unsafe { core::ptr::write_bytes(page as *mut u8, 0, pmm::PAGE) };
-    mmio.write(virtio::QUEUE_NUM, QUEUE as u32);
-    for (reg, offset) in [(virtio::QUEUE_DESC_LOW, 0), (virtio::QUEUE_DRIVER_LOW, AVAIL), (virtio::QUEUE_DEVICE_LOW, USED)] {
-        let addr = (page + offset) as u64;
-        mmio.write(reg, addr as u32);
-        mmio.write(reg + 4, (addr >> 32) as u32);
-    }
-    mmio.write(virtio::QUEUE_READY, 1);
+    let Some(ready) = mmio.event_queue(page, QUEUE as u32, AVAIL, USED) else {
+        pmm::free_pages(page, 1);
+        return false;
+    };
     // se publica una vez, antes de habilitar la interrupción de la ranura.
     unsafe { addr_of_mut!(GPU).write(Some(Gpu { mmio, page })) };
     gic::enable(mmio.irq());

@@ -124,6 +124,7 @@ enum Wait {
     Input,        // espera entrada de la consola
     Disk,         // espera que el disco termine una peticion
     Fs,           // espera que termine una operacion del sistema de archivos
+    GraphicalInput, // espera teclado o tableta
     Gpu,          // espera fin de un comando de la gpu
     DiskFree,     // espera a que otra tarea libere la cola del disco
 }
@@ -471,6 +472,16 @@ pub fn wait_disk() {
 /// espera el turno para usar la cola; irq debe estar enmascarada.
 pub fn wait_disk_free() {
     wait_turn(Wait::DiskFree);
+}
+
+pub fn wait_graphical_input() {
+    wait_turn(Wait::GraphicalInput);
+}
+
+pub fn wake_graphical_input() {
+    if wake_turn(Wait::GraphicalInput) {
+        NEED.store(true, Ordering::Relaxed);
+    }
 }
 
 pub fn wait_gpu() {

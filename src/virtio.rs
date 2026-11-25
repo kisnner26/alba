@@ -53,6 +53,42 @@ impl Mmio {
         unsafe { ((self.0 + reg) as *mut u32).write_volatile(value) };
     }
 
+    /// prepara una cola dividida para un dispositivo sin características específicas.
+    #[inline(never)]
+    pub fn event_queue(self, page: usize, len: u32, avail: usize, used: usize) -> Option<u32> {
+        self.write(STATUS, 0);
+        let driver = ST_ACKNOWLEDGE | ST_DRIVER;
+        self.write(STATUS, ST_ACKNOWLEDGE);
+        self.write(STATUS, driver);
+        self.write(DEVICE_FEATURES_SEL, 1);
+        if self.read(DEVICE_FEATURES) & 1 == 0 {
+            self.write(STATUS, ST_FAILED);
+            return None;
+        }
+        self.write(DRIVER_FEATURES_SEL, 0);
+        self.write(DRIVER_FEATURES, 0);
+        self.write(DRIVER_FEATURES_SEL, 1);
+        self.write(DRIVER_FEATURES, 1);
+        let ready = driver | ST_FEATURES_OK;
+        self.write(STATUS, ready);
+        self.write(QUEUE_SEL, 0);
+        if self.read(STATUS) & ST_FEATURES_OK == 0
+            || self.read(QUEUE_NUM_MAX) < len
+            || self.read(QUEUE_READY) != 0
+        {
+            self.write(STATUS, ST_FAILED);
+            return None;
+        }
+        self.write(QUEUE_NUM, len);
+        for (reg, offset) in [(QUEUE_DESC_LOW, 0), (QUEUE_DRIVER_LOW, avail), (QUEUE_DEVICE_LOW, used)] {
+            let addr = (page + offset) as u64;
+            self.write(reg, addr as u32);
+            self.write(reg + 4, (addr >> 32) as u32);
+        }
+        self.write(QUEUE_READY, 1);
+        Some(ready)
+    }
+
     /// numero de interrupcion (SPI) de esta ranura en QEMU virt: la primera ranura es la SPI 16,
     /// o sea INTID 48
     pub fn irq(&self) -> u32 {
@@ -103,4 +139,9 @@ pub fn find(device_id: u32) -> Option<Mmio> {
     (0..SLOTS).map(slot).find(|m| {
         m.read(MAGIC_VALUE) == MAGIC && m.read(VERSION) == 2 && m.read(DEVICE_ID) == device_id
     })
+}
+
+pub fn find_inputs() -> impl Iterator<Item = Mmio> {
+    (0..SLOTS).map(slot).filter(|m|
+        m.read(MAGIC_VALUE) == MAGIC && m.read(VERSION) == 2 && m.read(DEVICE_ID) == 18)
 }
