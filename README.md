@@ -11,7 +11,7 @@ no es una distribución de linux, no es un fork de ningún sistema existente y n
 - **el procesador duerme siempre que puede.** el kernel no tiene tics periódicos: el temporizador solo se programa para el próximo evento real (un `sleep` que vence, el turno de otra tarea lista) y se apaga cuando no hay ninguno. la tarea inactiva ejecuta `wfi` y no gasta turnos. en reposo, cero despertares.
 - **nada de sondeo.** el disco y la consola avisan por interrupción; las tareas que esperan se bloquean y el procesador duerme mientras tanto.
 - **menos trabajo por tarea.** peticiones de disco de varios sectores (un programa se lee de una sola vez), cambio de espacio de direcciones sin vaciar la TLB (ASID), cachés encendidas desde el arranque.
-- **medido, no supuesto.** `uptime` informa cuántas interrupciones de timer ha habido y los tests fallan si el kernel despierta al procesador en reposo o si lanzar programas se vuelve lento. ver "energía y rendimiento".
+- **medido, no supuesto.** `uptime` muestra las interrupciones de timer y las peticiones enviadas al disco y los tests fallan si el kernel despierta al procesador en reposo o si lanzar programas se vuelve lento. ver "energía y rendimiento".
 - **rendimiento.** arranque en milisegundos, programas que se lanzan sin que se note, asignadores propios y copias evitadas. el objetivo declarado es superar a macOS en eficiencia por vatio; hoy solo se mide en emulación, así que todavía no hay comparación honesta (ver más abajo).
 - **minimalismo.** kernel pequeño, pocas llamadas al sistema, cero dependencias externas dentro del kernel. menos código es menos que ejecutar y menos que despertar.
 - **interfaz estilo macOS.** compositor propio con barra de menú, dock, ventanas con sombra y esquinas redondeadas, tipografía propia y animaciones fluidas, sin pagar energía por ello: solo se redibuja lo que cambia y la pantalla estática no despierta a nadie.
@@ -25,17 +25,17 @@ medido en QEMU (`make test` lo comprueba en cada cambio):
 | interrupciones de timer en 6 s de reposo | 0 |
 | lanzar 5 programas seguidos (leer ELF, cargar, ejecutar, esperar) | menos de 100 ms en total, 0 interrupciones de timer |
 | espera de entrada de consola y de disco | por interrupción, sin sondeo |
+| repetir `cat hola.txt` con la caché caliente | 0 peticiones adicionales al disco |
 
-lo que **no** está medido todavía, para no engañar: consumo real en vatios. QEMU emula el procesador, no su consumo, así que estas cifras miden despertares y latencia, que son las causas principales de gasto en reposo, pero no energía. la comparación con macOS solo será honesta con mediciones en hardware real (etapa 11), con el mismo procesador y la misma carga.
+lo que **no** está medido todavía, para no engañar: consumo real en vatios. QEMU emula el procesador, no su consumo, así que estas cifras miden despertares y latencia, además de peticiones de disco. el consumo requiere mediciones de potencia. la comparación con macOS solo será honesta con mediciones en hardware real (etapa 11), con el mismo procesador y la misma carga.
 
 pendiente para bajar más el consumo, en orden de impacto:
 
 1. apagar los núcleos secundarios y despertarlos solo bajo demanda (PSCI `CPU_OFF` / `CPU_ON`), y estados de reposo profundo (`CPU_SUSPEND`)
 2. escalado de frecuencia y voltaje en hardware real, con política de "correr rápido y dormir" (race to idle)
 3. agrupar temporizadores cercanos para despertar una vez en lugar de varias
-4. caché de bloques del disco para no volver a leer lo mismo
-5. pantalla: redibujar solo las regiones que cambian y apagar la GPU cuando nada se mueve
-6. herramienta de contabilidad de despertares por proceso
+4. pantalla: redibujar solo las regiones que cambian y apagar la GPU cuando nada se mueve
+5. herramienta de contabilidad de despertares por proceso
 
 ## qué significa "desde cero"
 
