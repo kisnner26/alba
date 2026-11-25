@@ -1,0 +1,171 @@
+// cola de control virtio-gpu 2d. una sola tarea envía comandos y espera su irq.
+use crate::{gic, irq, pmm, sched, virtio::{self, Mmio}};
+use core::ptr::{addr_of, addr_of_mut};
+use core::sync::atomic::{fence, Ordering};
+
+const QUEUE: usize = 8;
+const AVAIL: usize = 128;
+const USED: usize = 256;
+const COMMAND: usize = 512;
+const RESPONSE: usize = 1024;
+const RESPONSE_BYTES: u32 = 408;
+const OK: u32 = 0x1100;
+
+struct Gpu {
+    mmio: Mmio,
+    page: usize,
+}
+
+static mut GPU: Option<Gpu> = None;
+
+#[inline(never)]
+pub fn init() -> bool {
+    let Some(mmio) = virtio::find(virtio::ID_GPU) else { return false };
+    mmio.write(virtio::STATUS, 0);
+    let driver = virtio::ST_ACKNOWLEDGE | virtio::ST_DRIVER;
+    mmio.write(virtio::STATUS, virtio::ST_ACKNOWLEDGE);
+    mmio.write(virtio::STATUS, driver);
+    mmio.write(virtio::DEVICE_FEATURES_SEL, 1);
+    if mmio.read(virtio::DEVICE_FEATURES) & 1 == 0 {
+        mmio.write(virtio::STATUS, virtio::ST_FAILED);
+        return false;
+    }
+    mmio.write(virtio::DRIVER_FEATURES_SEL, 0);
+    mmio.write(virtio::DRIVER_FEATURES, 0);
+    mmio.write(virtio::DRIVER_FEATURES_SEL, 1);
+    mmio.write(virtio::DRIVER_FEATURES, 1);
+    let ready = driver | virtio::ST_FEATURES_OK;
+    mmio.write(virtio::STATUS, ready);
+    mmio.write(virtio::QUEUE_SEL, 0);
+    if mmio.read(virtio::STATUS) & virtio::ST_FEATURES_OK == 0
+        || mmio.read(virtio::QUEUE_NUM_MAX) < QUEUE as u32
+        || mmio.read(virtio::QUEUE_READY) != 0
+    {
+        mmio.write(virtio::STATUS, virtio::ST_FAILED);
+        return false;
+    }
+    let Some(page) = pmm::alloc_pages(1) else {
+        mmio.write(virtio::STATUS, virtio::ST_FAILED);
+        return false;
+    };
+    // página propia del driver, mapeada por identidad y coherente en qemu.
+    unsafe { core::ptr::write_bytes(page as *mut u8, 0, pmm::PAGE) };
+    mmio.write(virtio::QUEUE_NUM, QUEUE as u32);
+    for (reg, offset) in [(virtio::QUEUE_DESC_LOW, 0), (virtio::QUEUE_DRIVER_LOW, AVAIL), (virtio::QUEUE_DEVICE_LOW, USED)] {
+        let addr = (page + offset) as u64;
+        mmio.write(reg, addr as u32);
+        mmio.write(reg + 4, (addr >> 32) as u32);
+    }
+    mmio.write(virtio::QUEUE_READY, 1);
+    // se publica una vez, antes de habilitar la interrupción de la ranura.
+    unsafe { addr_of_mut!(GPU).write(Some(Gpu { mmio, page })) };
+    gic::enable(mmio.irq());
+    mmio.write(virtio::STATUS, ready | virtio::ST_DRIVER_OK);
+    true
+}
+
+fn device() -> Option<&'static Gpu> {
+    // una vez publicado, el estado no se modifica.
+    unsafe { (*addr_of!(GPU)).as_ref() }
+}
+
+pub fn irq(id: u32) -> bool {
+    let Some(gpu) = device().filter(|gpu| gpu.mmio.irq() == id) else { return false };
+    let status = gpu.mmio.read(virtio::INTERRUPT_STATUS);
+    gpu.mmio.write(virtio::INTERRUPT_ACK, status);
+    if status & 1 != 0 {
+        sched::wake_gpu();
+    }
+    true
+}
+
+impl Gpu {
+    #[inline(never)]
+    fn command(&self, kind: u32, body: &[u32]) -> u32 {
+        let p = self.page;
+        let masked = irq::save();
+        // la única tarea que usa la cola escribe antes de publicar y lee después de completarse.
+        let response = unsafe {
+            let word = |off: usize| (p + off) as *mut u32;
+            let half = |off: usize| (p + off) as *mut u16;
+            let desc = |off, addr: usize, len, flags| {
+                ((p + off) as *mut u64).write_volatile(addr as u64);
+                word(off + 8).write_volatile(len);
+                word(off + 12).write_volatile(flags);
+            };
+            let current = half(AVAIL + 2).read_volatile();
+            word(COMMAND).write_volatile(kind);
+            word(COMMAND + 4).write_volatile(1); // fence: terminar antes de responder
+            word(COMMAND + 8).write_volatile(u32::from(current));
+            for (i, &value) in body.iter().enumerate() {
+                word(COMMAND + 24 + i * 4).write_volatile(value);
+            }
+            word(RESPONSE).write_volatile(0);
+            desc(0, p + COMMAND, (24 + body.len() * 4) as u32, (1 << 16) | 1);
+            desc(16, p + RESPONSE, RESPONSE_BYTES, 2);
+            half(AVAIL + 4 + usize::from(current) % QUEUE * 2).write_volatile(0);
+            fence(Ordering::SeqCst);
+            half(AVAIL + 2).write_volatile(current.wrapping_add(1));
+            fence(Ordering::SeqCst);
+            self.mmio.write(virtio::QUEUE_NOTIFY, 0);
+            while half(USED + 2).read_volatile() == current {
+                sched::wait_gpu();
+            }
+            fence(Ordering::SeqCst);
+            let done = USED + 4 + usize::from(current) % QUEUE * 8;
+            let len = word(done + 4).read_volatile();
+            if word(done).read_volatile() != 0 || len < 24 || len > RESPONSE_BYTES {
+                0
+            } else {
+                let kind = word(RESPONSE).read_volatile();
+                if kind == 0x1101 && len != RESPONSE_BYTES { 0 } else { kind }
+            }
+        };
+        irq::restore(masked);
+        response
+    }
+}
+
+pub fn start() {
+    if draw_test_pattern().is_none() {
+        crate::println!("gpu: no se pudo preparar la salida");
+    }
+}
+
+fn draw_test_pattern() -> Option<()> {
+    let gpu = device()?;
+    if gpu.command(0x100, &[]) != 0x1101 {
+        return None;
+    }
+    // la respuesta pertenece a esta tarea y la cola no tiene ningún comando en vuelo.
+    let read = |offset: usize| unsafe { ((gpu.page + RESPONSE + offset) as *const u32).read_volatile() };
+    let scanout = (0..16).find(|&i| read(24 + i * 24 + 16) == 1).unwrap_or(0);
+    let mode = 24 + scanout * 24;
+    let (width, height) = match (read(mode + 8), read(mode + 12)) {
+        (0, _) | (_, 0) => (800, 600),
+        (w, h) => (w.min(1024), h.min(768)),
+    };
+    let bytes = width * height * 4;
+    let buffer = pmm::alloc_pages((bytes as usize).div_ceil(pmm::PAGE))?;
+    // el buffer aún no se ha expuesto a la gpu. el patrón identifica dos regiones del scanout.
+    let pixels = unsafe { core::slice::from_raw_parts_mut(buffer as *mut u32, (bytes / 4) as usize) };
+    for (y, row) in pixels.chunks_exact_mut(width as usize).enumerate() {
+        row.fill(if y < 32 { 0x001e2c42 } else { 0x00121927 });
+    }
+    let (lo, hi) = (buffer as u32, (buffer as u64 >> 32) as u32);
+    if gpu.command(0x101, &[1, 2, width, height]) != OK
+        || gpu.command(0x106, &[1, 1, lo, hi, bytes, 0]) != OK
+        || gpu.command(0x103, &[0, 0, width, height, scanout as u32, 1]) != OK
+        || gpu.command(0x105, &[0, 0, width, height, 0, 0, 1, 0]) != OK
+        || gpu.command(0x104, &[0, 0, width, height, 1, 0]) != OK
+    {
+        // detener el dispositivo antes de devolver páginas que pudo conservar por dma.
+        gpu.mmio.write(virtio::STATUS, 0);
+        if gpu.mmio.read(virtio::STATUS) == 0 {
+            pmm::free_pages(buffer, (bytes as usize).div_ceil(pmm::PAGE));
+        }
+        return None;
+    }
+    crate::println!("gpu: scanout {}x{}", width, height);
+    Some(())
+}
