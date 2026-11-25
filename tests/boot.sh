@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. ocho pruebas:
+# arranca alba en qemu y comprueba la salida. nueve pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
@@ -8,6 +8,7 @@
 #   6. rendimiento: lanzar programas seguidos es casi instantaneo y apenas despierta al timer
 #   7. cache: el segundo cat no vuelve a pedir datos al disco
 #   8. persistencia: copia, borra y vuelve a arrancar con el mismo disco
+#   9. recursos: medir y comparar con los límites registrados
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -64,7 +65,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS02\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 18 archivos"
+  "albafs: 19 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
@@ -217,3 +218,7 @@ echo "ok: persistencia de albafs verificada"
 
 # deja el binario normal compilado
 build >/dev/null 2>&1
+
+# --- 9. presupuestos de recursos ---
+./tools/medir.sh --check
+echo "ok: presupuestos de recursos verificados"
