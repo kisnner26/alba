@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. trece pruebas:
+# arranca alba en qemu y comprueba la salida. catorce pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
@@ -13,6 +13,7 @@
 #   11. estabilidad: lanzar mil procesos y verificar páginas libres
 #   12. entradas truncadas o dañadas en los lectores elf y albafs
 #   13. diagnóstico fatal visible por serie y en el framebuffer
+#   14. corte de energía: matar qemu a mitad de escrituras y volver a montar el mismo disco
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -261,3 +262,27 @@ target/fuzz-formatos target/disk/hola target/alba-soak.img
 build --features gpu-panic-test
 python3 tests/gpu.py "$KERNEL" "$DISK" panic
 build >/dev/null 2>&1
+
+# --- 14. corte de energia: matar qemu en plena escritura y volver a montar el mismo disco ---
+# fscorte reescribe sin parar tres archivos verificables; qemu muere con SIGKILL en un instante
+# distinto cada vez. tras cada corte, el disco debe montar y cada archivo estar ausente, vacio o
+# completo, nunca a medias. limite: el host conserva lo que qemu ya recibio, asi que esto prueba
+# que el directorio se publica de forma atomica, no que sobreviva a perder escrituras ya aceptadas.
+build >/dev/null 2>&1
+completos=0
+for corte in 1 2 3 4 5; do
+  conservar=""
+  [ "$corte" -gt 1 ] && conservar="conservar"
+  ALBA_KILL_SIGNAL=KILL run_qemu "$((5 + RANDOM % 3)).$((RANDOM % 10))" 128M 'fscorte inundar\n' '' $conservar
+  run_qemu 6 128M 'fscorte verificar\n' '' conservar
+  if grep -qE "FALLO|CORRUPTO|conflicto|ninguna copia" "$OUT" ||
+     ! grep -qE "albafs: [0-9]+ archivos" "$OUT" ||
+     ! grep -qE "fscorte: ok [0-9]+ completos" "$OUT"; then
+    echo "el disco no quedo coherente tras el corte $corte"; cat "$OUT"; exit 1
+  fi
+  completos=$((completos + $(grep -oE "fscorte: ok [0-9]+ completos" "$OUT" | grep -oE "[0-9]+")))
+done
+if [ "$completos" -lt 1 ]; then
+  echo "la prueba de corte no escribio nada: ningun archivo completo en 5 cortes"; exit 1
+fi
+echo "ok: albafs sobrevive a 5 cortes abruptos ($completos archivos completos verificados)"
