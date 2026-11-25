@@ -1,6 +1,6 @@
 # límites medidos con tools/medir.sh. +5% (redondeado hacia arriba).
 # los límites existentes solo bajan. añade una métrica al incorporar un programa.
-arranque_us                                  106321
+arranque_us                                    2417
 disco_minimo_bytes                           236544
 kernel_bytes                                  64748
 lanzamiento_caliente_us                          39

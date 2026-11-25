@@ -295,13 +295,16 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
         Err(e) => println!("init: no se pudo lanzar la shell ({})", e),
     }
 
-    unsafe { core::arch::asm!("msr daifclr, #2") }; // desenmascara irq
-    blk::enable_irq(); // desde aqui el disco avisa por interrupcion en vez de sondeo
+    blk::enable_irq(); // las tareas nuevas ya pueden esperar al disco por irq.
+    unsafe { core::arch::asm!("msr daifclr, #2") };
 
     #[cfg(feature = "crash-test")]
     unsafe {
         core::arch::asm!("brk #0")
     };
+
+    // la primera tarea ya está lista. no hay que esperar al primer turno del timer.
+    sched::yield_now();
 
     // tarea idle: el procesador duerme (wfi) hasta que llegue una interrupcion. con el timer
     // apagado cuando no hay eventos, en reposo no se despierta ni una vez.
