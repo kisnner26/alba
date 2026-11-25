@@ -45,7 +45,7 @@ cortex-a72, tcg con `-icount shift=0,sleep=on`, 128 mib y consola serie.
 | métrica | medida |
 |---------|--------|
 | imagen plana del kernel | 69.848 bytes |
-| disco mínimo de la imagen actual | 259.584 bytes |
+| disco mínimo de la imagen actual | 261.632 bytes |
 | ram reservada u ocupada al llegar a la shell | 1.986.560 bytes |
 | páginas propias de la shell | 7 de kernel y 6 de usuario |
 | arranque hasta la entrada a la shell | 105.348 µs |
@@ -188,7 +188,10 @@ alba carga el escritorio si qemu presenta `virtio-gpu-device`. la consola
 serie sigue disponible. el escritorio dibuja desde el espacio de usuario
 sobre un framebuffer propio y refresca solo la región que indica. la prueba
 gráfica comprueba la captura y un segundo de reposo sin interrupciones del
-temporizador.
+temporizador. con `virtio-keyboard-device` y `virtio-tablet-device` el
+escritorio recibe el teclado y el puntero sin sondeo. `f2` cambia entre
+inglés y español latinoamericano. se pueden seleccionar las vistas del dock
+y arrastrar el panel por su cabecera.
 
 ### probar en windows con qemu
 
