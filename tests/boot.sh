@@ -66,7 +66,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS02\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 19 archivos"
+  "albafs: 20 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"

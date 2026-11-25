@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from threading import Timer
 
@@ -29,12 +30,23 @@ def check(kernel, disk):
             timeout = Timer(30, qemu.kill)
             timeout.start()
             try:
-                for line in qemu.stdout:
-                    print(line, end="")
-                    if "gpu: scanout " in line:
-                        break
-                else:
-                    raise SystemExit("la gpu no estableció el scanout")
+                def expect(pattern):
+                    for line in qemu.stdout:
+                        print(line, end="")
+                        if match := re.search(pattern, line):
+                            return match
+                    raise SystemExit(f"no apareció {pattern} en el arranque gráfico")
+
+                def timer_irqs():
+                    qemu.stdin.write("uptime\n")
+                    qemu.stdin.flush()
+                    return int(expect(r"interrupciones de timer: (\d+)").group(1))
+
+                expect("desktop: listo")
+                before = timer_irqs()
+                time.sleep(1)
+                if timer_irqs() != before:
+                    raise SystemExit("el escritorio estático despertó al temporizador")
 
                 with socket.socket(socket.AF_UNIX) as connection:
                     connection.settimeout(5)
@@ -73,8 +85,10 @@ def check(kernel, disk):
         pixels = ppm[header.end():]
         if height <= 32 or len(pixels) != width * height * 3:
             raise SystemExit("dimensiones inesperadas del scanout")
-        if pixels[:3] != bytes.fromhex("1e2c42") or pixels[-3:] != bytes.fromhex("121927"):
-            raise SystemExit("la captura no contiene las dos regiones del framebuffer")
+        dot = (15 * width + 22) * 3
+        if pixels[:3] != bytes.fromhex("171c28") or pixels[dot:dot + 3] != bytes.fromhex("5d95ff"):
+            raise SystemExit("la captura no refleja la barra y su actualización parcial")
+
 
 
 if __name__ == "__main__":
