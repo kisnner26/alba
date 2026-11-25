@@ -26,6 +26,7 @@ build() {
 run_qemu() {
   OUT=$(mktemp)
   ./tools/mkdisk.sh "$DISK" >/dev/null
+  DISK_BEFORE=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$DISK")
   local qemu=(qemu-system-aarch64 -machine virt -cpu cortex-a72 -m "${2:-128M}" -nographic
     -global virtio-mmio.force-legacy=false
     -drive file="$DISK",if=none,format=raw,id=hd0 -device virtio-blk-device,drive=hd0
@@ -129,6 +130,10 @@ echo "ok: RAM dinamica verificada"
 # en "holx" + retroceso + "a alba" el programa leer debe recibir "hola alba"
 build
 run_qemu 10 128M 'ls\ncat hola.txt\necho uno dos\ndesconocido\nleer\nholx\x7fa alba\nuptime\nexit\n'
+disk_after=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$DISK")
+if [ "$DISK_BEFORE" != "$disk_after" ]; then
+  echo "el arranque normal modifico el disco"; exit 1
+fi
 sh_expected=(
   "alba shell. escribe help para ver los comandos."
   "init: shell lanzada"

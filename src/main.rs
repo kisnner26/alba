@@ -204,12 +204,15 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
         if blk::read(0, &mut sector) {
             println!("disco: sector 0 = {:?}", core::str::from_utf8(&sector[..8]).unwrap_or("?"));
         }
-        // escribir y volver a leer el ultimo sector (el sistema de archivos no lo usa)
-        let last = blk::sectors() - 1;
-        let pattern = [0xa5u8; blk::SECTOR];
-        let mut back = [0u8; blk::SECTOR];
-        let ok = blk::write(last, &pattern) && blk::read(last, &mut back) && back == pattern;
-        println!("disco: escritura y lectura del sector {} {}", last, if ok { "ok" } else { "FALLO" });
+        // solo en el disco desechable de la bateria de pruebas.
+        #[cfg(feature = "autotest")]
+        {
+            let last = blk::sectors() - 1;
+            let pattern = [0xa5u8; blk::SECTOR];
+            let mut back = [0u8; blk::SECTOR];
+            let ok = blk::write(last, &pattern) && blk::read(last, &mut back) && back == pattern;
+            println!("disco: escritura y lectura del sector {} {}", last, if ok { "ok" } else { "FALLO" });
+        }
 
         match fs::mount() {
             Ok(()) => {
