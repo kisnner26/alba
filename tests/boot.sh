@@ -72,7 +72,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS02\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 24 archivos"
+  "albafs: $(ls target/disk | wc -l | tr -d ' ') archivos" # tantos como los que armo mkdisk.sh
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
