@@ -53,6 +53,10 @@ path = "src/bin/intruso.rs"
 name = "intruso2"
 path = "src/bin/intruso2.rs"
 
+[[bin]]
+name = "fscorte"
+path = "src/bin/fscorte.rs"
+
 [profile.dev]
 panic = "abort"
 
