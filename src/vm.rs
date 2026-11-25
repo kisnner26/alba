@@ -181,6 +181,20 @@ impl AddrSpace {
         self.ttbr
     }
 
+    /// páginas propias del proceso. las tablas compartidas no se cuentan.
+    pub fn page_counts(&self) -> (u32, u32) {
+        let mut kernel = 0;
+        let mut user = 0;
+        for &(addr, count) in &self.pages {
+            if addr < mmu::KERNEL_ZONE_END {
+                kernel += count as u32;
+            } else {
+                user += count as u32;
+            }
+        }
+        (kernel, user)
+    }
+
     /// el rango [ptr, ptr+len) cae entero dentro de una region mapeada del proceso
     pub fn contains(&self, ptr: usize, len: usize, write: bool) -> bool {
         let Some(end) = ptr.checked_add(len) else {

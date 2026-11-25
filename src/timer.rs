@@ -15,6 +15,9 @@ pub const IRQ: u32 = 30;
 const HZ: u64 = 10;
 
 /// pasos del contador por tick (frecuencia / HZ)
+static BOOT_START: AtomicU64 = AtomicU64::new(0);
+static FREQUENCY: AtomicU64 = AtomicU64::new(0);
+
 static INTERVAL: AtomicU64 = AtomicU64::new(0);
 /// interrupciones de timer atendidas desde el arranque (para medir cuanto despierta al procesador)
 static IRQS: AtomicU64 = AtomicU64::new(0);
@@ -26,12 +29,21 @@ fn count() -> u64 {
     c
 }
 
-pub fn init() {
+pub fn init(boot_start: u64) {
     let freq: u64;
     unsafe { asm!("mrs {}, cntfrq_el0", out(reg) freq) };
+    BOOT_START.store(boot_start, Ordering::Relaxed);
+    FREQUENCY.store(freq, Ordering::Relaxed);
     INTERVAL.store(freq / HZ, Ordering::Relaxed);
     disarm();
     crate::gic::enable(IRQ);
+}
+
+/// microsegundos del contador físico desde la entrada en _start.
+pub fn micros() -> u64 {
+    let elapsed = count().wrapping_sub(BOOT_START.load(Ordering::Relaxed));
+    let freq = FREQUENCY.load(Ordering::Relaxed);
+    (u128::from(elapsed) * 1_000_000 / u128::from(freq)) as u64
 }
 
 /// tiempo desde el arranque, en ticks de 100 ms

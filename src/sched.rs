@@ -228,6 +228,12 @@ pub fn user_range_ok(ptr: u64, len: u64, write: bool) -> bool {
         .is_some_and(|sp| sp.contains(ptr as usize, len as usize, write))
 }
 
+pub fn current_page_counts() -> (u32, u32) {
+    let task = sched().current.as_ref().unwrap();
+    let (tables, user) = task.space.as_ref().map_or((0, 0), AddrSpace::page_counts);
+    (tables + STACK_PAGES as u32, user)
+}
+
 pub fn open_file(entry: core::num::NonZeroU64) -> Option<u64> {
     let files = &mut sched().current.as_mut()?.files;
     let index = files.iter().position(Option::is_none)?;

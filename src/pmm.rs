@@ -158,3 +158,20 @@ pub fn free_kib() -> usize {
 pub fn total_kib() -> usize {
     (mmu::ram_end() - RAM_BASE) / 1024
 }
+
+/// páginas libres y ocupadas, incluidas las regiones reservadas del kernel.
+pub fn zone_counts(user: bool) -> (u32, u32) {
+    let g = crate::irq::save();
+    let boundary = page_of(KERNEL_ZONE_END) / 64;
+    let (start, end) = if user { (boundary, npages().div_ceil(64)) } else { (0, boundary) };
+    let mut allocated = 0;
+    // la sección crítica impide que se modifique el mapa durante la medición.
+    let words = unsafe { &bitmap()[start..end] };
+    for (index, &word) in words.iter().enumerate() {
+        let remaining = (npages() - (index + start) * 64).min(64);
+        allocated += (word & (u64::MAX >> (64 - remaining))).count_ones();
+    }
+    let total = (npages().min(end * 64) - start * 64) as u32;
+    crate::irq::restore(g);
+    (total - allocated, allocated)
+}

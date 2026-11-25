@@ -53,6 +53,8 @@ pub fn dispatch(nr: u64, a: [u64; 5]) -> u64 {
         15 => sched::close_file(a[0]).map_or(ERR, |_| 0),
         16 => name_op(a[0], a[1], fs::create),
         17 => name_op(a[0], a[1], fs::unlink),
+        18 => meminfo(a[0]),
+        19 => crate::timer::micros(),
         _ => ERR,
     }
 }
@@ -174,4 +176,14 @@ fn name_op(ptr: u64, len: u64, op: fn(&str) -> Option<()>) -> u64 {
     let Some(name) = copy_in(ptr, len, 39) else { return ERR };
     let Ok(name) = core::str::from_utf8(&name) else { return ERR };
     op(name).map_or(ERR, |_| 0)
+}
+
+/// zonas 0 y 1 devuelven (libres, usadas); 2 devuelve (kernel, usuario) de la tarea.
+fn meminfo(selector: u64) -> u64 {
+    let (low, high) = match selector {
+        0 | 1 => crate::pmm::zone_counts(selector == 1),
+        2 => sched::current_page_counts(),
+        _ => return ERR,
+    };
+    u64::from(low) | (u64::from(high) << 32)
 }

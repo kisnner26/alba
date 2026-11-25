@@ -24,7 +24,8 @@ _start:
     .quad 0
     .long 0x644d5241            // magic "ARM\x64"
     .long 0
-4:  mov x20, x0
+4:  mrs x21, cntpct_el0
+    mov x20, x0
     mrs x0, mpidr_el1
     and x0, x0, #3
     cbnz x0, 1f
@@ -37,6 +38,7 @@ _start:
     str xzr, [x0], #8
     b 2b
 3:  mov x0, x20
+    mov x1, x21
     bl kmain
 1:  wfe
     b 1b
@@ -156,7 +158,7 @@ extern crate alloc;
 static HEAP: heap::KernelHeap = heap::KernelHeap;
 
 #[no_mangle]
-pub extern "C" fn kmain(dtb: usize) -> ! {
+pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
     println!("alba 0.0.1");
     println!("hola desde mi propio sistema operativo");
     if fdt::is_valid(dtb) {
@@ -246,7 +248,7 @@ pub extern "C" fn kmain(dtb: usize) -> ! {
     };
 
     gic::init();
-    timer::init();
+    timer::init(boot_start);
     console::init();
 
     sched::init();
