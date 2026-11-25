@@ -17,9 +17,9 @@ mkdir -p "$STAGE"
 cp disk/* "$STAGE"/
 for src in user/src/bin/*.rs; do
   name=$(basename "$src" .rs)
-  if [ "$name" = fdtest ] && [ "${ALBA_DISK_TEST:-0}" != 1 ]; then
-    continue
-  fi
+  case "$name:${ALBA_DISK_TEST:-0}" in
+    fdtest:0|intruso:0|intruso2:0|lanzador:0) continue ;;
+  esac
   cp "user/target/$TARGET/release/$name" "$STAGE/$name"
   chmod +x "$STAGE/$name" # mkfs marca como ejecutables los archivos con permiso de ejecucion
 done
