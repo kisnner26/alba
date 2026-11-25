@@ -82,7 +82,7 @@ la eficiencia energetica es la prioridad maxima y se traduce en reglas concretas
 ## disco y sistema de archivos
 
 - **virtio-mmio** ([src/virtio.rs](../src/virtio.rs)): QEMU `virt` expone 32 ranuras de 0x200 bytes desde `0x0a00_0000` (en el bloque de dispositivos, sin caché). se exige la versión moderna (`-global virtio-mmio.force-legacy=false`).
-- **virtio-blk** ([src/blk.rs](../src/blk.rs)): inicialización según la especificación (reinicio, `ACKNOWLEDGE`, `DRIVER`, característica `VERSION_1`, `FEATURES_OK`, cola 0, `DRIVER_OK`). una cola de 8 entradas y una petición a la vez, con una cadena de 3 descriptores (cabecera, 512 bytes de datos, estado). cada petición corre con las interrupciones enmascaradas y espera por sondeo con un límite. la memoria de la cola sale de `pmm` (identidad). pendiente: mantenimiento de caché para hardware real.
+- **virtio-blk** ([src/blk.rs](../src/blk.rs)): inicialización según la especificación (reinicio, `ACKNOWLEDGE`, `DRIVER`, característica `VERSION_1`, `FEATURES_OK`, cola 0, `DRIVER_OK`). una cola de 8 entradas y una petición a la vez, con una cadena de 3 descriptores (cabecera, hasta 64 KiB de datos, estado). durante el arranque espera por sondeo con un límite; después, la tarea espera la interrupción y las demás esperan su turno sin sobrescribir la petición. la memoria de la cola sale de `pmm` (identidad). pendiente: mantenimiento de caché para hardware real.
 - **albafs** ([src/fs.rs](../src/fs.rs), [albafs.md](albafs.md)): montaje con validación del superbloque y del directorio (tamaños, límites, que ningún archivo se salga del disco), lectura de archivos sector a sector. solo lectura por ahora.
 
 ## modo usuario y llamadas al sistema
