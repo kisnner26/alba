@@ -46,7 +46,7 @@ cortex-a72, tcg con `-icount shift=0,sleep=on`, 128 mib y consola serie.
 |---------|--------|
 | imagen plana del kernel | 61.664 bytes |
 | disco mínimo de la imagen actual | 225.280 bytes |
-| ram reservada u ocupada al llegar a la shell | 1.978.368 bytes |
+| ram reservada u ocupada al llegar a la shell | 1.974.272 bytes |
 | páginas propias de la shell | 7 de kernel y 6 de usuario |
 | arranque hasta la entrada a la shell | 105.348 µs |
 | lanzar y esperar `echo`, primera ejecución | 45 µs |
@@ -191,6 +191,12 @@ en la consola, `edit archivo` edita texto utf-8 de hasta 4096 bytes.
 publica el cambio en albafs v2 y `:salir` cierra el editor. `mv` renombra
 hacia un destino libre. `files` muestra el directorio y `top` toma una
 instantánea de los procesos.
+
+la shell admite `<`, `>`, `>>` y un conducto `|` entre dos programas.
+separa los operadores con espacios. por ejemplo, `echo hola | cat` pasa
+la salida al segundo proceso y `ls > salida.txt` guarda el listado.
+los conductos bloquean al lector cuando están vacíos y al escritor cuando
+se llenan. al cerrar el último escritor, el lector recibe fin de archivo.
 
 ### salida gráfica en qemu
 
