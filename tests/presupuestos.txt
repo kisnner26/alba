@@ -8,6 +8,7 @@ lanzamiento_frio_us                              48
 proceso_kernel_paginas                            8
 proceso_usuario_paginas                           6
 programa.cat.bytes                            14079
+programa.cmp.bytes                              14163
 programa.cp.bytes                             14121
 programa.desktop.bytes                        18632
 programa.echo.bytes                           13961
@@ -15,6 +16,7 @@ programa.eco.bytes                            13902
 programa.edit.bytes                           14331
 programa.fdtest.bytes                         19346
 programa.free.bytes                           13827
+programa.fscorte.bytes                          14306
 programa.hola.bytes                           17573
 programa.intruso.bytes                         9484
 programa.intruso2.bytes                        9492
@@ -27,6 +29,7 @@ programa.rm.bytes                             13919
 programa.sh.bytes                             14902
 programa.stress.bytes                         14549
 programa.touch.bytes                          13928
+programa.uno.bytes                               9408
 programa.uptime.bytes                         13684
 ram_reposo_bytes                            2072986
 timer_reposo_irqs_por_segundo                     0
