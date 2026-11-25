@@ -83,6 +83,20 @@ pub fn close(fd: u64) -> bool {
     syscall(15, fd, 0, 0, 0) == 0
 }
 
+/// crea un archivo vacio; falla si el nombre ya existe.
+pub fn create(name: &str) -> bool {
+    syscall(16, name.as_ptr() as u64, name.len() as u64, 0, 0) == 0
+}
+
+/// anexa al final del archivo y deja el descriptor en la nueva posicion final.
+pub fn append(fd: u64, data: &[u8]) -> bool {
+    syscall(0, fd, data.as_ptr() as u64, data.len() as u64, 0) == data.len() as u64
+}
+
+pub fn unlink(name: &str) -> bool {
+    syscall(17, name.as_ptr() as u64, name.len() as u64, 0, 0) == 0
+}
+
 /// lee de un archivo del disco a partir de `offset`. devuelve los bytes leidos (0 = fin) o None
 /// si el archivo no existe.
 pub fn read_file(name: &str, buf: &mut [u8], offset: u64) -> Option<usize> {
