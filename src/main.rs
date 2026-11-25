@@ -205,6 +205,7 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
         println!("heap: tras liberar, usado={} KiB", before - pmm::free_kib());
     }
 
+    #[cfg(feature = "autotest")]
     virtio::scan();
     if blk::init() {
         println!("disco: {} sectores de {} bytes", blk::sectors(), blk::SECTOR);
@@ -228,6 +229,7 @@ pub extern "C" fn kmain(dtb: usize, boot_start: u64) -> ! {
         match fs::mount() {
             Ok(()) => {
                 println!("albafs: {} archivos", fs::count());
+                #[cfg(feature = "autotest")]
                 for e in (0..fs::count()).filter_map(fs::list) {
                     let x = if e.flags & fs::FLAG_EXEC != 0 { " ejecutable" } else { "" };
                     println!("  {} ({} bytes{})", e.name, e.size, x);

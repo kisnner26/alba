@@ -169,6 +169,20 @@ pub fn append(id: u64, data: &[u8]) -> Option<u32> {
     }).flatten()
 }
 
+pub fn save_text(name: &str, data: &[u8]) -> Option<()> {
+    with_fs(|fs| match fs {
+        Fs::V2(volume) => volume.save_text(name, data),
+        Fs::V1(_) => None,
+    }).flatten()
+}
+
+pub fn rename(from: &str, to: &str) -> Option<()> {
+    with_fs(|fs| match fs {
+        Fs::V2(volume) => volume.rename(from, to),
+        Fs::V1(_) => None,
+    }).flatten()
+}
+
 pub fn unlink(name: &str) -> Option<()> {
     with_fs(|fs| match fs {
         Fs::V2(volume) => volume.unlink(name),

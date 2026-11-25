@@ -157,16 +157,21 @@ impl Volume {
             return None;
         }
         let slot = self.slots.iter().position(|e| e.as_ref().is_some_and(|e| e.id == id))?;
-        let mut entry = self.slots[slot].as_ref()?.clone();
+        let entry = self.slots[slot].as_ref()?.clone();
         if entry.flags & FLAG_EXEC != 0 {
             return None;
         }
         if data.is_empty() {
             return Some(entry.size);
         }
+        self.rewrite(slot, entry, data)
+    }
+
+    #[inline(never)]
+    fn rewrite(&mut self, slot: usize, mut entry: Entry, data: &[u8]) -> Option<u32> {
         self.generation.checked_add(1)?;
         let size = entry.size.checked_add(u32::try_from(data.len()).ok()?)?;
-        let start = self.extent(sectors(size))?;
+        let start = if size == 0 { 0 } else { self.extent(sectors(size))? };
         // usa un solo buffer acotado para la copia, aunque el archivo sea grande.
         let mut chunk = vec![0; 4096];
         let mut offset = 0u32;
@@ -188,7 +193,7 @@ impl Volume {
             }
             offset += n as u32;
         }
-        if !blk::flush() {
+        if size != 0 && !blk::flush() {
             self.writable = false;
             return None;
         }
@@ -196,6 +201,37 @@ impl Volume {
         entry.size = size;
         self.commit(slot, Some(entry))?;
         Some(size)
+    }
+
+    pub fn save_text(&mut self, name: &str, data: &[u8]) -> Option<()> {
+        if !self.writable || !super::valid_name(name) {
+            return None;
+        }
+        let current = self.slots.iter().position(|e| e.as_ref().is_some_and(|e| e.name == name));
+        let slot = current.or_else(|| self.slots.iter().position(Option::is_none))?;
+        let mut entry = match &self.slots[slot] {
+            Some(entry) if entry.flags & FLAG_EXEC == 0 => entry.clone(),
+            Some(_) => return None,
+            None => Entry { id: self.generation.checked_add(1)?, name: String::from(name), start: 0, size: 0, flags: 0 },
+        };
+        entry.size = 0;
+        self.rewrite(slot, entry, data).map(|_| ())
+    }
+
+    pub fn rename(&mut self, from: &str, to: &str) -> Option<()> {
+        if !self.writable || !super::valid_name(to) {
+            return None;
+        }
+        let slot = self.slots.iter().position(|e| e.as_ref().is_some_and(|e| e.name == from))?;
+        if from == to {
+            return Some(());
+        }
+        if self.slots.iter().flatten().any(|e| e.name == to) {
+            return None;
+        }
+        let mut entry = self.slots[slot].as_ref()?.clone();
+        entry.name = String::from(to);
+        self.commit(slot, Some(entry))
     }
 
     pub fn unlink(&mut self, name: &str) -> Option<()> {

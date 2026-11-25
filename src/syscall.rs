@@ -63,6 +63,8 @@ pub fn dispatch(nr: u64, a: [u64; 5]) -> u64 {
         22 => crate::gpu::flush([a[0], a[1], a[2], a[3]]).map_or(ERR, |_| 0),
         23 => crate::input::read().unwrap_or(ERR),
         24 => procinfo(a[0], a[1], a[2]),
+        25 => save_text(a[0], a[1], a[2], a[3]).map_or(ERR, |_| 0),
+        26 => rename(a[0], a[1], a[2], a[3]).map_or(ERR, |_| 0),
         _ => ERR,
     }
 }
@@ -204,4 +206,17 @@ fn procinfo(index: u64, ptr: u64, len: u64) -> u64 {
     let Some(data) = sched::procinfo(index as usize) else { return 0 };
     out.copy_from_slice(&data);
     len
+}
+
+fn save_text(name: u64, name_len: u64, data: u64, data_len: u64) -> Option<()> {
+    let name = copy_in(name, name_len, 39)?;
+    let data = copy_in(data, data_len, 4096)?;
+    core::str::from_utf8(&data).ok()?;
+    fs::save_text(core::str::from_utf8(&name).ok()?, &data)
+}
+
+fn rename(from: u64, from_len: u64, to: u64, to_len: u64) -> Option<()> {
+    let from = copy_in(from, from_len, 39)?;
+    let to = copy_in(to, to_len, 39)?;
+    fs::rename(core::str::from_utf8(&from).ok()?, core::str::from_utf8(&to).ok()?)
 }

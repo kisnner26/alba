@@ -107,6 +107,7 @@ fn slot(i: usize) -> Mmio {
     Mmio(BASE + i * STRIDE)
 }
 
+#[cfg(feature = "autotest")]
 fn name(id: u32) -> &'static str {
     match id {
         1 => "red",
@@ -120,6 +121,7 @@ fn name(id: u32) -> &'static str {
 }
 
 /// recorre las ranuras y muestra los dispositivos presentes
+#[cfg(feature = "autotest")]
 pub fn scan() {
     for i in 0..SLOTS {
         let m = slot(i);
