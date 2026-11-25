@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# arranca alba en qemu y comprueba la salida. seis pruebas:
+# arranca alba en qemu y comprueba la salida. siete pruebas:
 #   1. arranque normal: lineas esperadas y ninguna excepcion, panic, ERROR o FALLO
 #   2. feature wx-test: escribir en el texto del kernel debe dar un fallo de datos (W^X activo)
 #   3. -m 256M: el kernel debe leer el tamano real de la RAM del DTB
 #   4. shell: sesion tecleada por el UART (ls, cat, echo, leer con retroceso, uptime, exit)
 #   5. energia: sin interrupciones de timer en reposo (kernel sin tics)
 #   6. rendimiento: lanzar programas seguidos es casi instantaneo y apenas despierta al timer
+#   7. cache: el segundo cat no vuelve a pedir datos al disco
 # uso: tests/boot.sh   (BOOT_SECS=12 por defecto para la prueba 1)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -181,6 +182,17 @@ if [ "$span" -gt 5 ] || [ "$wake" -gt 3 ]; then
   cat "$OUT"; exit 1
 fi
 echo "ok: rendimiento verificado (5 programas lanzados en ${span}/10 s, ${wake} interrupciones de timer)"
+
+# --- 7. cache: el segundo cat no debe enviar peticiones a virtio ---
+run_qemu 7 128M 'uptime\ncat hola.txt\nuptime\ncat hola.txt\nuptime\n'
+requests=($(grep -oE "peticiones de disco: [0-9]+" "$OUT" | grep -oE "[0-9]+$"))
+if [ "${#requests[@]}" -ne 3 ] ||
+   [ "$(grep -cE '^(alba> )?hola desde el disco de alba$' "$OUT")" -ne 2 ] ||
+   [ "${requests[1]}" -le "${requests[0]}" ] ||
+   [ "${requests[2]}" -ne "${requests[1]}" ]; then
+  echo "se esperaba una lectura inicial y cero peticiones para el segundo cat"; cat "$OUT"; exit 1
+fi
+echo "ok: cache verificada (peticiones de disco: ${requests[*]})"
 
 # deja el binario normal compilado
 build >/dev/null 2>&1
