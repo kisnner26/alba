@@ -1,8 +1,8 @@
 # límites medidos con tools/medir.sh. +5% (redondeado hacia arriba).
 # los límites existentes solo bajan. añade una métrica al incorporar un programa.
 arranque_us                                  106321
-disco_minimo_bytes                           269338
-kernel_bytes                                  73341
+disco_minimo_bytes                           241383
+kernel_bytes                                  64748
 lanzamiento_caliente_us                          39
 lanzamiento_frio_us                              48
 proceso_kernel_paginas                            8
@@ -12,6 +12,7 @@ programa.cp.bytes                             14196
 programa.desktop.bytes                        18632
 programa.echo.bytes                           14062
 programa.eco.bytes                            13902
+programa.edit.bytes                           14457
 programa.fdtest.bytes                         19421
 programa.free.bytes                           13827
 programa.hola.bytes                           17573
@@ -25,5 +26,5 @@ programa.rm.bytes                             13919
 programa.sh.bytes                             19119
 programa.touch.bytes                          13928
 programa.uptime.bytes                         13684
-ram_reposo_bytes                            2085888
+ram_reposo_bytes                            2077287
 timer_reposo_irqs_por_segundo                     0

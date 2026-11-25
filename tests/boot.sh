@@ -66,7 +66,7 @@ expected=(
   "disco: 2048 sectores de 512 bytes"
   "disco: sector 0 = \"ALBAFS02\""
   "disco: escritura y lectura del sector 2047 ok"
-  "albafs: 21 archivos"
+  "albafs: 22 archivos"
   "LEEME.txt (82 bytes)"
   "hola.txt: hola desde el disco de alba"
   "heap: suma=49995000"
@@ -135,7 +135,7 @@ echo "ok: RAM dinamica verificada"
 # arranque normal (sin autotest): va directo a la shell. se teclea una sesion completa;
 # en "holx" + retroceso + "a alba" el programa leer debe recibir "hola alba"
 build
-run_qemu 10 128M 'ls\ncat hola.txt\necho uno dos\ndesconocido\nleer\nholx\x7fa alba\nuptime\nfdtest\nfdtest\nps\nexit\n'
+run_qemu 10 128M 'ls\ncat hola.txt\necho uno dos\ndesconocido\nleer\nholx\x7fa alba\nuptime\nfdtest\nfdtest\nps\ntop\nfiles\nexit\n'
 disk_after=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$DISK")
 if [ "$DISK_BEFORE" != "$disk_after" ]; then
   echo "el arranque normal modifico el disco"; exit 1
@@ -163,6 +163,10 @@ fi
 if ! grep -qE '^[0-9]+ +corriendo +[0-9]+ +[0-9]+ +[0-9]+ +ps$' "$OUT" ||
    ! grep -qE '^[0-9]+ +bloqueado +[0-9]+ +[1-9][0-9]* +[1-9][0-9]* +sh$' "$OUT"; then
   echo "ps no mostró sh bloqueada y ps corriendo"; cat "$OUT"; exit 1
+fi
+if ! grep -qE '^[0-9]+ +corriendo +[0-9]+ +[0-9]+ +[0-9]+ +top$' "$OUT" ||
+   ! grep -qE '^ps +[0-9]+\.[0-9] kib' "$OUT"; then
+  echo "top o files no mostraron la salida esperada"; cat "$OUT"; exit 1
 fi
 echo "ok: shell verificada"
 
@@ -207,16 +211,18 @@ fi
 echo "ok: cache verificada (peticiones de disco: ${requests[*]})"
 
 # --- 8. persistencia: volver a arrancar con el mismo disco, sin regenerarlo ---
-run_qemu 7 128M 'touch borrar.txt\nrm borrar.txt\ncp hola.txt persistente.txt\ncat persistente.txt\n'
+run_qemu 7 128M 'touch borrar.txt\nrm borrar.txt\ncp hola.txt persistente.txt\ncat persistente.txt\nedit nota.txt\ntexto descartado\n:guardar\nedit nota.txt\n:borrar\ntexto guardado desde edit\n:guardar\nmv nota.txt renombrada.txt\n'
 if ! grep -qE '^(alba> )*hola desde el disco de alba$' "$OUT"; then
   echo "no se pudo crear o leer el archivo de prueba"; cat "$OUT"; exit 1
 fi
-if grep -qE 'termino con codigo|FALLO|panic' "$OUT"; then
+if [ "$(grep -cF 'edit: guardado' "$OUT")" -ne 2 ] || grep -qE 'termino con codigo|FALLO|panic' "$OUT"; then
   echo "error al modificar albafs"; cat "$OUT"; exit 1
 fi
-run_qemu 7 128M 'cat persistente.txt\ncat borrar.txt\n' '' conservar
+run_qemu 7 128M 'cat persistente.txt\ncat borrar.txt\ncat renombrada.txt\ncat nota.txt\n' '' conservar
 if ! grep -qE '^(alba> )*hola desde el disco de alba$' "$OUT" ||
-   ! grep -qF 'cat: no se pudo abrir: borrar.txt' "$OUT"; then
+   ! grep -qF 'cat: no se pudo abrir: borrar.txt' "$OUT" ||
+   ! grep -qF 'cat: no se pudo abrir: nota.txt' "$OUT" ||
+   ! grep -qE '^(alba> )*texto guardado desde edit$' "$OUT"; then
   echo "no persistieron los cambios en albafs"; cat "$OUT"; exit 1
 fi
 echo "ok: persistencia de albafs verificada"
